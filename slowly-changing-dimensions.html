@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mastering Slowly Changing Dimensions in Data Warehousing - Pabesh</title>
+    <meta name="description" content="Complete guide to implementing Slowly Changing Dimensions (SCD) Types 0-6. Learn best practices for tracking historical changes in dimensional data.">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="nav">
+        <div class="nav-container">
+            <a href="index.html" class="logo">Pabesh</a>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link">Home</a>
+                <a href="about.html" class="nav-link">About</a>
+                <a href="#" class="nav-link">Archive</a>
+            </div>
+            <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
+                <span class="theme-icon">◐</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Article Header -->
+    <header class="article-header">
+        <div class="article-category">Data Engineering</div>
+        <h1 class="article-title">Mastering Slowly Changing Dimensions in Data Warehousing</h1>
+        <div class="article-meta">
+            <span class="meta-item">By Pabesh Team</span>
+            <span class="meta-divider">·</span>
+            <span class="meta-item">February 9, 2026</span>
+            <span class="meta-divider">·</span>
+            <span class="meta-item">20 min read</span>
+        </div>
+        <p class="article-excerpt">
+            Master the art of tracking historical changes in dimensional data. Learn implementation strategies for SCD Types 0-6, choose the right approach for your use case, and build maintainable data warehouse solutions.
+        </p>
+    </header>
+
+    <!-- Article Content -->
+    <article class="article-content">
+        <p>
+            In data warehousing, dimensions describe the context of facts—the who, what, where, and when that give meaning to measurable events. But dimensions aren't static. Customers change addresses, products get rebranded, employees switch departments, and organizational structures evolve. How you handle these changes fundamentally impacts your ability to answer historical questions accurately.
+        </p>
+
+        <p>
+            Slowly Changing Dimensions (SCD) are dimensional attributes that change over time, but at a slower rate than facts. The term "slowly" is relative—a customer's address might change every few years, while a product's category could change quarterly. What matters is that these changes happen less frequently than the transactional events you're analyzing, and you need a strategy to track them.
+        </p>
+
+        <p>
+            The way you implement SCDs affects everything from query complexity and storage requirements to analytical flexibility and data quality. Choose the wrong approach, and you might lose crucial historical context, bloat your warehouse unnecessarily, or make simple queries impossibly complex. This comprehensive guide will help you understand each SCD type, implement them correctly, and choose the right strategy for your specific needs.
+        </p>
+
+        <h2>Understanding the Challenge</h2>
+        
+        <p>
+            Imagine you're analyzing sales data for a retail company. On January 1st, customer Sarah Johnson lived in New York and was categorized as a "Gold" tier customer. During the year, she moved to California and, due to increased purchases, was upgraded to "Platinum" tier. Now you're running a year-end analysis. Several questions arise that seem simple but require careful consideration:
+        </p>
+
+        <p>
+            What was Sarah's tier when she made a purchase in March? If we're calculating regional sales, should her January purchases count toward New York or California? For customer lifetime value calculations, do we use her current tier or track tier changes over time? These questions don't have one "correct" answer—the right approach depends on your analytical requirements.
+        </p>
+
+        <p>
+            The fundamental challenge is balancing competing needs. Business users want to see current information—Sarah's current address and tier. Analysts need historical accuracy—what tier was she when she made each purchase. Executives want trend analysis—how many customers upgraded from Gold to Platinum this year. Your SCD implementation must support all these needs efficiently.
+        </p>
+
+        <h2>SCD Type 0: Retain Original</h2>
+
+        <p>
+            Type 0 is the simplest approach: never change dimension attributes. Once a value is set, it remains unchanged regardless of real-world updates. This might seem overly rigid, but it's appropriate for certain attributes that represent original or initial state.
+        </p>
+
+        <h3>When to Use Type 0</h3>
+
+        <p>
+            Use Type 0 for attributes where the original value has lasting significance. Examples include a customer's original signup date, the initial sale price of a product, an employee's hire date, or the founding location of a company. These values provide context even as other attributes change—knowing where a customer originally signed up can be valuable for market analysis, even if they've since relocated.
+        </p>
+
+        <h3>Implementation</h3>
+
+        <p>
+            Implementation is straightforward—simply exclude these columns from your update logic:
+        </p>
+
+        <pre><code>-- Customer dimension with Type 0 attributes
+CREATE TABLE dim_customer (
+    customer_key INT PRIMARY KEY,
+    customer_id VARCHAR(50) NOT NULL,
+    
+    -- Type 0: Never changes
+    original_signup_date DATE NOT NULL,
+    original_signup_channel VARCHAR(50) NOT NULL,
+    original_country VARCHAR(100) NOT NULL,
+    
+    -- Other attributes that may change
+    customer_name VARCHAR(200),
+    current_country VARCHAR(100),
+    email VARCHAR(200),
+    
+    -- Audit columns
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Update logic explicitly excludes Type 0 fields
+UPDATE dim_customer
+SET 
+    customer_name = new.customer_name,
+    current_country = new.current_country,
+    email = new.email,
+    updated_at = CURRENT_TIMESTAMP
+    -- Note: original_* fields are never updated
+WHERE customer_id = new.customer_id;</code></pre>
+
+        <p>
+            Document Type 0 attributes clearly in your data dictionary. ETL developers need to know these fields should never be overwritten, even if source systems send updates. This prevents accidental data loss and ensures historical context is preserved.
+        </p>
+
+        <h2>SCD Type 1: Overwrite</h2>
+
+        <p>
+            Type 1 simply overwrites old values with new ones. It's the default behavior in most systems—when data changes, you update it. No history is maintained; you only have the current state. This approach minimizes storage and complexity but sacrifices historical accuracy.
+        </p>
+
+        <h3>When to Use Type 1</h3>
+
+        <p>
+            Type 1 is appropriate when you only care about current values and historical changes aren't analytically significant. Common examples include correcting data entry errors, updating email addresses or phone numbers, fixing typos in names, or refreshing non-critical attributes like preferences or settings.
+        </p>
+
+        <p>
+            Type 1 is also suitable for attributes where changes reflect corrections rather than true state changes. If a product was miscategorized and you're fixing the error, you probably want to apply the correction historically rather than track the "wrong then right" progression.
+        </p>
+
+        <h3>Implementation</h3>
+
+        <pre><code>-- Simple Type 1 dimension
+CREATE TABLE dim_product (
+    product_key INT PRIMARY KEY,
+    product_id VARCHAR(50) NOT NULL,
+    product_name VARCHAR(200) NOT NULL,
+    category VARCHAR(100),
+    description TEXT,
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Type 1 update: Simple overwrite
+UPDATE dim_product
+SET 
+    product_name = 'Updated Product Name',
+    category = 'New Category',
+    description = 'New description text',
+    last_updated = CURRENT_TIMESTAMP
+WHERE product_id = 'PROD-123';
+
+-- SQL merge pattern for Type 1
+MERGE INTO dim_product AS target
+USING staging_product AS source
+ON target.product_id = source.product_id
+WHEN MATCHED THEN
+    UPDATE SET
+        product_name = source.product_name,
+        category = source.category,
+        description = source.description,
+        last_updated = CURRENT_TIMESTAMP
+WHEN NOT MATCHED THEN
+    INSERT (product_id, product_name, category, description)
+    VALUES (source.product_id, source.product_name, 
+            source.category, source.description);</code></pre>
+
+        <h3>Advantages and Limitations</h3>
+
+        <p>
+            Type 1's simplicity is its greatest strength. Storage requirements are minimal—one row per dimension member. Queries are straightforward—no need to filter by date ranges or active flags. ETL logic is simple—just update the record. There's no confusion about which version to use—there's only one.
+        </p>
+
+        <p>
+            However, you lose all historical context. If a customer's tier changed three times last year, you have no way to know. Reports on historical data may be misleading—last month's sales by region will reflect today's regional assignments, not the actual regions at the time of sale. This can lead to serious analytical errors when business users don't understand the limitation.
+        </p>
+
+        <h2>SCD Type 2: Add New Row</h2>
+
+        <p>
+            Type 2 maintains full history by creating a new dimension row for each change. Instead of updating existing rows, you insert new ones with updated values. This preserves complete historical accuracy at the cost of increased storage and complexity. Type 2 is the most common approach for attributes where history matters.
+        </p>
+
+        <h3>Core Implementation Strategy</h3>
+
+        <p>
+            Type 2 dimensions require additional metadata columns to track versions. At minimum, you need effective and expiration dates to define when each version was valid. Many implementations add version numbers, current record flags, and audit timestamps for completeness.
+        </p>
+
+        <pre><code>-- Type 2 Customer Dimension
+CREATE TABLE dim_customer (
+    -- Surrogate key (auto-incrementing)
+    customer_key BIGINT PRIMARY KEY AUTO_INCREMENT,
+    
+    -- Natural key (business identifier)
+    customer_id VARCHAR(50) NOT NULL,
+    
+    -- Dimensional attributes
+    customer_name VARCHAR(200) NOT NULL,
+    email VARCHAR(200),
+    tier VARCHAR(50),
+    region VARCHAR(100),
+    address VARCHAR(500),
+    
+    -- Type 2 SCD tracking columns
+    effective_date DATE NOT NULL,
+    expiration_date DATE,
+    is_current BOOLEAN DEFAULT TRUE,
+    version_number INT DEFAULT 1,
+    
+    -- Audit columns
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Indexes for performance
+    INDEX idx_customer_id (customer_id),
+    INDEX idx_current (customer_id, is_current),
+    INDEX idx_effective_dates (effective_date, expiration_date)
+);
+
+-- Example: Customer history over time
+INSERT INTO dim_customer VALUES
+-- Original record
+(1, 'CUST-001', 'Sarah Johnson', 'sarah@email.com', 'Gold', 
+ 'New York', '123 NY Street', '2024-01-01', '2024-06-30', FALSE, 1, 
+ '2024-01-01', '2024-06-30'),
+
+-- After moving to California
+(2, 'CUST-001', 'Sarah Johnson', 'sarah@email.com', 'Gold', 
+ 'California', '456 CA Avenue', '2024-07-01', '2024-10-31', FALSE, 2,
+ '2024-07-01', '2024-10-31'),
+
+-- After tier upgrade
+(3, 'CUST-001', 'Sarah Johnson', 'sarah@email.com', 'Platinum', 
+ 'California', '456 CA Avenue', '2024-11-01', NULL, TRUE, 3,
+ '2024-11-01', CURRENT_TIMESTAMP);</code></pre>
+
+        <h3>Handling Updates</h3>
+
+        <p>
+            When a Type 2 attribute changes, you must expire the current record and insert a new one. This two-step process maintains referential integrity and ensures no gaps in coverage:
+        </p>
+
+        <pre><code>-- Type 2 Update Procedure
+CREATE PROCEDURE update_customer_type2(
+    p_customer_id VARCHAR(50),
+    p_customer_name VARCHAR(200),
+    p_email VARCHAR(200),
+    p_tier VARCHAR(50),
+    p_region VARCHAR(100),
+    p_address VARCHAR(500),
+    p_effective_date DATE
+)
+BEGIN
+    DECLARE v_changed BOOLEAN DEFAULT FALSE;
+    DECLARE v_current_tier VARCHAR(50);
+    DECLARE v_current_region VARCHAR(100);
+    DECLARE v_current_address VARCHAR(500);
+    DECLARE v_version INT;
+    
+    -- Get current values
+    SELECT tier, region, address, version_number
+    INTO v_current_tier, v_current_region, v_current_address, v_version
+    FROM dim_customer
+    WHERE customer_id = p_customer_id AND is_current = TRUE;
+    
+    -- Check if Type 2 attributes changed
+    IF (v_current_tier != p_tier OR 
+        v_current_region != p_region OR 
+        v_current_address != p_address) THEN
+        SET v_changed = TRUE;
+    END IF;
+    
+    IF v_changed THEN
+        -- Step 1: Expire the current record
+        UPDATE dim_customer
+        SET 
+            expiration_date = p_effective_date - INTERVAL 1 DAY,
+            is_current = FALSE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE customer_id = p_customer_id AND is_current = TRUE;
+        
+        -- Step 2: Insert new record
+        INSERT INTO dim_customer (
+            customer_id, customer_name, email, tier, region, address,
+            effective_date, expiration_date, is_current, version_number
+        )
+        VALUES (
+            p_customer_id, p_customer_name, p_email, p_tier, 
+            p_region, p_address,
+            p_effective_date, NULL, TRUE, v_version + 1
+        );
+    ELSE
+        -- Type 1 update for non-tracked attributes (like email)
+        UPDATE dim_customer
+        SET 
+            customer_name = p_customer_name,
+            email = p_email,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE customer_id = p_customer_id AND is_current = TRUE;
+    END IF;
+END;</code></pre>
+
+        <h3>Querying Type 2 Dimensions</h3>
+
+        <p>
+            The power of Type 2 is the ability to answer "as of" questions accurately. You can reconstruct the state of your warehouse at any point in time by joining facts to the dimension version that was current when the fact occurred:
+        </p>
+
+        <pre><code>-- Get current customer information
+SELECT 
+    customer_id,
+    customer_name,
+    tier,
+    region
+FROM dim_customer
+WHERE is_current = TRUE;
+
+-- Get customer information as of a specific date
+SELECT 
+    customer_id,
+    customer_name,
+    tier,
+    region
+FROM dim_customer
+WHERE customer_id = 'CUST-001'
+  AND '2024-08-15' BETWEEN effective_date AND 
+      COALESCE(expiration_date, '9999-12-31');
+
+-- Join facts to correct dimension version
+SELECT 
+    f.transaction_date,
+    f.amount,
+    c.customer_name,
+    c.tier,
+    c.region
+FROM fact_sales f
+JOIN dim_customer c ON f.customer_key = c.customer_key
+WHERE f.transaction_date BETWEEN '2024-01-01' AND '2024-12-31';
+
+-- Track changes over time
+SELECT 
+    customer_id,
+    version_number,
+    tier,
+    region,
+    effective_date,
+    expiration_date
+FROM dim_customer
+WHERE customer_id = 'CUST-001'
+ORDER BY effective_date;
+
+-- Analyze tier changes
+SELECT 
+    customer_id,
+    customer_name,
+    COUNT(*) - 1 AS number_of_changes,
+    MIN(effective_date) AS first_seen,
+    MAX(effective_date) AS last_changed
+FROM dim_customer
+GROUP BY customer_id, customer_name
+HAVING COUNT(*) > 1
+ORDER BY number_of_changes DESC;</code></pre>
+
+        <h3>Best Practices for Type 2</h3>
+
+        <p>
+            Always use a surrogate key (customer_key) as the primary key, not the natural key (customer_id). This allows multiple rows for the same business entity. Facts should reference the surrogate key to automatically point to the correct historical version.
+        </p>
+
+        <p>
+            Decide carefully which attributes warrant Type 2 tracking. Not every change needs history. A good rule of thumb: if analysts would ask "what was this customer's tier when they made this purchase?", track it with Type 2. If they only care about current values, use Type 1.
+        </p>
+
+        <p>
+            Handle late-arriving facts carefully. If a sale from June arrives in December, it should join to the June version of the customer dimension, not the current one. This requires storing dimension keys with facts or using date-based joins.
+        </p>
+
+        <h2>SCD Type 3: Add New Column</h2>
+
+        <p>
+            Type 3 maintains limited history by adding columns to store previous values. Instead of creating new rows, you keep the current value in one column and the previous value in another. This provides simple before-and-after comparisons without the complexity of Type 2.
+        </p>
+
+        <h3>When to Use Type 3</h3>
+
+        <p>
+            Type 3 works well when you need to track only the most recent change and compare current versus previous values. Common scenarios include tracking the last address before the current one, comparing this year's sales territory to last year's, or monitoring the most recent price change for pricing analysis.
+        </p>
+
+        <pre><code>-- Type 3 Dimension: Current and Previous
+CREATE TABLE dim_customer (
+    customer_key INT PRIMARY KEY,
+    customer_id VARCHAR(50) NOT NULL,
+    customer_name VARCHAR(200),
+    
+    -- Current values
+    current_tier VARCHAR(50),
+    current_region VARCHAR(100),
+    
+    -- Previous values (Type 3)
+    previous_tier VARCHAR(50),
+    previous_region VARCHAR(100),
+    
+    -- Effective dates
+    current_tier_effective_date DATE,
+    previous_tier_effective_date DATE,
+    
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Update procedure for Type 3
+CREATE PROCEDURE update_customer_type3(
+    p_customer_id VARCHAR(50),
+    p_new_tier VARCHAR(50),
+    p_new_region VARCHAR(100),
+    p_effective_date DATE
+)
+BEGIN
+    UPDATE dim_customer
+    SET 
+        -- Move current to previous
+        previous_tier = current_tier,
+        previous_region = current_region,
+        previous_tier_effective_date = current_tier_effective_date,
+        
+        -- Set new current values
+        current_tier = p_new_tier,
+        current_region = p_new_region,
+        current_tier_effective_date = p_effective_date,
+        
+        last_updated = CURRENT_TIMESTAMP
+    WHERE customer_id = p_customer_id
+      AND (current_tier != p_new_tier OR current_region != p_new_region);
+END;
+
+-- Query examples
+-- Compare current vs previous
+SELECT 
+    customer_id,
+    customer_name,
+    previous_tier,
+    current_tier,
+    CASE 
+        WHEN current_tier = 'Platinum' AND previous_tier = 'Gold' 
+        THEN 'Upgraded'
+        WHEN current_tier = 'Gold' AND previous_tier = 'Platinum' 
+        THEN 'Downgraded'
+        ELSE 'No Change'
+    END AS tier_movement
+FROM dim_customer;
+
+-- Find all customers who upgraded
+SELECT 
+    customer_id,
+    customer_name,
+    previous_tier,
+    current_tier,
+    current_tier_effective_date AS upgrade_date
+FROM dim_customer
+WHERE current_tier = 'Platinum' 
+  AND previous_tier IN ('Gold', 'Silver');</code></pre>
+
+        <h3>Limitations</h3>
+
+        <p>
+            Type 3's main limitation is that you only track one level of history. If a customer's tier changes three times, you lose the first change. You also can't answer "as of" questions for arbitrary dates—only for the current and previous states. For deep historical analysis, Type 2 is more appropriate.
+        </p>
+
+        <h2>SCD Type 4: Historical Table</h2>
+
+        <p>
+            Type 4 separates current and historical data into different tables. The main dimension table contains only current values, while a separate history table tracks all changes. This approach optimizes query performance by keeping the main table small while still preserving complete history.
+        </p>
+
+        <h3>Implementation</h3>
+
+        <pre><code>-- Current dimension (fast queries)
+CREATE TABLE dim_customer_current (
+    customer_key INT PRIMARY KEY,
+    customer_id VARCHAR(50) NOT NULL UNIQUE,
+    customer_name VARCHAR(200),
+    tier VARCHAR(50),
+    region VARCHAR(100),
+    email VARCHAR(200),
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_customer_id (customer_id)
+);
+
+-- Historical dimension (complete audit trail)
+CREATE TABLE dim_customer_history (
+    history_key BIGINT PRIMARY KEY AUTO_INCREMENT,
+    customer_key INT NOT NULL,
+    customer_id VARCHAR(50) NOT NULL,
+    customer_name VARCHAR(200),
+    tier VARCHAR(50),
+    region VARCHAR(100),
+    email VARCHAR(200),
+    
+    -- Historical tracking
+    effective_date DATE NOT NULL,
+    expiration_date DATE,
+    change_type VARCHAR(20),  -- INSERT, UPDATE, DELETE
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    INDEX idx_customer_id (customer_id),
+    INDEX idx_dates (effective_date, expiration_date),
+    INDEX idx_customer_key (customer_key)
+);
+
+-- Update procedure for Type 4
+CREATE PROCEDURE update_customer_type4(
+    p_customer_id VARCHAR(50),
+    p_customer_name VARCHAR(200),
+    p_tier VARCHAR(50),
+    p_region VARCHAR(100),
+    p_effective_date DATE
+)
+BEGIN
+    DECLARE v_customer_key INT;
+    DECLARE v_changed BOOLEAN DEFAULT FALSE;
+    
+    -- Get customer key and check for changes
+    SELECT customer_key INTO v_customer_key
+    FROM dim_customer_current
+    WHERE customer_id = p_customer_id;
+    
+    -- Check if tracking attributes changed
+    IF EXISTS (
+        SELECT 1 FROM dim_customer_current
+        WHERE customer_id = p_customer_id
+          AND (tier != p_tier OR region != p_region)
+    ) THEN
+        SET v_changed = TRUE;
+    END IF;
+    
+    IF v_changed THEN
+        -- Archive current version to history
+        INSERT INTO dim_customer_history (
+            customer_key, customer_id, customer_name, 
+            tier, region, email,
+            effective_date, expiration_date, change_type
+        )
+        SELECT 
+            customer_key, customer_id, customer_name,
+            tier, region, email,
+            -- Historical effective date from audit
+            DATE(last_updated),
+            p_effective_date - INTERVAL 1 DAY,
+            'UPDATE'
+        FROM dim_customer_current
+        WHERE customer_id = p_customer_id;
+    END IF;
+    
+    -- Update current table
+    UPDATE dim_customer_current
+    SET 
+        customer_name = p_customer_name,
+        tier = p_tier,
+        region = p_region,
+        last_updated = CURRENT_TIMESTAMP
+    WHERE customer_id = p_customer_id;
+END;
+
+-- Query current state (fast)
+SELECT * FROM dim_customer_current
+WHERE customer_id = 'CUST-001';
+
+-- Query historical state
+SELECT * FROM dim_customer_history
+WHERE customer_id = 'CUST-001'
+  AND '2024-06-15' BETWEEN effective_date AND 
+      COALESCE(expiration_date, '9999-12-31');
+
+-- Complete timeline (union current and history)
+SELECT 
+    customer_id,
+    tier,
+    region,
+    effective_date,
+    expiration_date,
+    'HISTORICAL' AS record_type
+FROM dim_customer_history
+WHERE customer_id = 'CUST-001'
+
+UNION ALL
+
+SELECT 
+    customer_id,
+    tier,
+    region,
+    DATE(last_updated) AS effective_date,
+    NULL AS expiration_date,
+    'CURRENT' AS record_type
+FROM dim_customer_current
+WHERE customer_id = 'CUST-001'
+
+ORDER BY effective_date;</code></pre>
+
+        <h3>Advantages</h3>
+
+        <p>
+            Type 4 provides the best of both worlds. The current table stays small and fast—perfect for real-time dashboards and operational queries. The history table provides complete audit trails for compliance and analysis. You can archive or partition the history table without affecting production queries. This separation also allows different retention policies—keep current data indefinitely but archive history after 7 years.
+        </p>
+
+        <h2>SCD Type 6: Hybrid Approach</h2>
+
+        <p>
+            Type 6 combines Types 1, 2, and 3 into a single implementation, giving you maximum flexibility. The name comes from 1+2+3=6. You maintain full history like Type 2, track previous values like Type 3, and update current values like Type 1—all in the same table.
+        </p>
+
+        <pre><code>-- Type 6 Dimension: The Ultimate Hybrid
+CREATE TABLE dim_customer_type6 (
+    -- Surrogate key for Type 2
+    customer_key BIGINT PRIMARY KEY AUTO_INCREMENT,
+    customer_id VARCHAR(50) NOT NULL,
+    
+    -- Dimensional attributes
+    customer_name VARCHAR(200),
+    
+    -- Historical values (Type 2)
+    historical_tier VARCHAR(50),
+    historical_region VARCHAR(100),
+    
+    -- Current values (Type 1 - always updated)
+    current_tier VARCHAR(50),
+    current_region VARCHAR(100),
+    
+    -- Previous values (Type 3)
+    previous_tier VARCHAR(50),
+    previous_region VARCHAR(100),
+    
+    -- Type 2 tracking
+    effective_date DATE NOT NULL,
+    expiration_date DATE,
+    is_current BOOLEAN DEFAULT TRUE,
+    version_number INT DEFAULT 1,
+    
+    -- Audit
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    INDEX idx_customer_id (customer_id),
+    INDEX idx_current (customer_id, is_current),
+    INDEX idx_dates (effective_date, expiration_date)
+);
+
+-- Type 6 Update Procedure
+CREATE PROCEDURE update_customer_type6(
+    p_customer_id VARCHAR(50),
+    p_tier VARCHAR(50),
+    p_region VARCHAR(100),
+    p_effective_date DATE
+)
+BEGIN
+    DECLARE v_current_tier VARCHAR(50);
+    DECLARE v_current_region VARCHAR(100);
+    
+    -- Get current values
+    SELECT current_tier, current_region
+    INTO v_current_tier, v_current_region
+    FROM dim_customer_type6
+    WHERE customer_id = p_customer_id AND is_current = TRUE;
+    
+    -- Check if tracked attributes changed
+    IF (v_current_tier != p_tier OR v_current_region != p_region) THEN
+        
+        -- Update ALL records for this customer (Type 1 aspect)
+        UPDATE dim_customer_type6
+        SET 
+            previous_tier = current_tier,
+            previous_region = current_region,
+            current_tier = p_tier,
+            current_region = p_region,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE customer_id = p_customer_id;
+        
+        -- Expire current record (Type 2 aspect)
+        UPDATE dim_customer_type6
+        SET 
+            expiration_date = p_effective_date - INTERVAL 1 DAY,
+            is_current = FALSE
+        WHERE customer_id = p_customer_id AND is_current = TRUE;
+        
+        -- Insert new record (Type 2 aspect)
+        INSERT INTO dim_customer_type6 (
+            customer_id, customer_name,
+            historical_tier, historical_region,
+            current_tier, current_region,
+            previous_tier, previous_region,
+            effective_date, is_current, version_number
+        )
+        SELECT 
+            customer_id, customer_name,
+            p_tier, p_region,  -- New historical values
+            p_tier, p_region,  -- New current values
+            v_current_tier, v_current_region,  -- Previous values
+            p_effective_date, TRUE, MAX(version_number) + 1
+        FROM dim_customer_type6
+        WHERE customer_id = p_customer_id
+        GROUP BY customer_id, customer_name;
+    END IF;
+END;
+
+-- Query Examples
+
+-- Current state with previous values
+SELECT 
+    customer_id,
+    current_tier,
+    previous_tier,
+    CASE 
+        WHEN current_tier > previous_tier THEN 'Upgraded'
+        WHEN current_tier < previous_tier THEN 'Downgraded'
+        ELSE 'No Change'
+    END AS status_change
+FROM dim_customer_type6
+WHERE is_current = TRUE;
+
+-- Historical analysis with current context
+SELECT 
+    f.transaction_date,
+    f.amount,
+    c.historical_tier AS tier_at_transaction,
+    c.current_tier AS current_tier,
+    c.historical_region AS region_at_transaction,
+    c.current_region AS current_region
+FROM fact_sales f
+JOIN dim_customer_type6 c ON f.customer_key = c.customer_key;
+
+-- Track customer journey
+SELECT 
+    customer_id,
+    version_number,
+    historical_tier,
+    current_tier,
+    effective_date,
+    expiration_date,
+    is_current
+FROM dim_customer_type6
+WHERE customer_id = 'CUST-001'
+ORDER BY effective_date;</code></pre>
+
+        <h3>When to Use Type 6</h3>
+
+        <p>
+            Type 6 is powerful but complex. Use it when you need to ask questions like "show me sales by the customer's tier at time of purchase, but also show their current tier for comparison" or "analyze regional performance historically, but group by current regional structure." The added complexity is justified when business requirements demand this level of flexibility.
+        </p>
+
+        <h2>Choosing the Right SCD Type</h2>
+
+        <p>
+            Selecting the appropriate SCD type requires balancing analytical needs, storage constraints, query complexity, and ETL maintainability. Here's a decision framework:
+        </p>
+
+        <h3>Decision Criteria</h3>
+
+        <p>
+            Start by understanding your analytical requirements. Do users need to perform trend analysis over time? Are you subject to regulatory requirements for audit trails? How often do dimension attributes change? What are the storage implications at your data volume?
+        </p>
+
+        <p>
+            For low-importance attributes where only current values matter, use Type 1. For critical attributes requiring complete history, use Type 2. When you need simple before-and-after comparison, Type 3 suffices. If current-state queries must be blazingly fast but you still need history, use Type 4. For complex scenarios requiring multiple historical perspectives, consider Type 6.
+        </p>
+
+        <h3>Hybrid Strategies</h3>
+
+        <p>
+            You don't need to use the same SCD type for all attributes in a dimension. A common pattern is mixing types within one table:
+        </p>
+
+        <pre><code>-- Mixed SCD Types in One Dimension
+CREATE TABLE dim_customer_mixed (
+    customer_key BIGINT PRIMARY KEY AUTO_INCREMENT,
+    customer_id VARCHAR(50) NOT NULL,
+    
+    -- Type 0: Never changes
+    original_signup_date DATE NOT NULL,
+    original_channel VARCHAR(50) NOT NULL,
+    
+    -- Type 1: Always current
+    email VARCHAR(200),
+    phone VARCHAR(50),
+    marketing_consent BOOLEAN,
+    
+    -- Type 2: Tracked historically
+    tier VARCHAR(50),
+    credit_limit DECIMAL(15, 2),
+    risk_category VARCHAR(50),
+    
+    -- Type 2 metadata
+    effective_date DATE NOT NULL,
+    expiration_date DATE,
+    is_current BOOLEAN DEFAULT TRUE,
+    
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);</code></pre>
+
+        <h2>Implementation Best Practices</h2>
+
+        <h3>Surrogate Keys</h3>
+
+        <p>
+            Always use surrogate keys (auto-incrementing integers) as primary keys for dimensions. Natural keys (like customer_id) should be indexed but not used as primary keys. This allows Type 2 to work correctly and makes fact table joins more efficient.
+        </p>
+
+        <h3>Effective Dating</h3>
+
+        <p>
+            Use inclusive start dates and exclusive end dates for consistency. If a record is effective from January 1 to January 31, set effective_date = '2024-01-01' and expiration_date = '2024-01-31'. This prevents gaps and overlaps. Always use BETWEEN clauses with COALESCE for current records:
+        </p>
+
+        <pre><code>WHERE transaction_date BETWEEN effective_date 
+                              AND COALESCE(expiration_date, '9999-12-31')</code></pre>
+
+        <h3>Data Quality Checks</h3>
+
+        <p>
+            Implement validation to prevent common SCD errors:
+        </p>
+
+        <pre><code>-- Check for gaps in coverage
+SELECT 
+    customer_id,
+    expiration_date AS gap_start,
+    next_effective AS gap_end
+FROM (
+    SELECT 
+        customer_id,
+        expiration_date,
+        LEAD(effective_date) OVER (
+            PARTITION BY customer_id ORDER BY effective_date
+        ) AS next_effective
+    FROM dim_customer
+) gaps
+WHERE expiration_date IS NOT NULL
+  AND next_effective IS NOT NULL
+  AND expiration_date + INTERVAL 1 DAY != next_effective;
+
+-- Check for overlaps
+SELECT 
+    a.customer_id,
+    a.customer_key AS key_1,
+    b.customer_key AS key_2,
+    a.effective_date AS start_1,
+    a.expiration_date AS end_1,
+    b.effective_date AS start_2,
+    b.expiration_date AS end_2
+FROM dim_customer a
+JOIN dim_customer b 
+    ON a.customer_id = b.customer_id 
+    AND a.customer_key < b.customer_key
+WHERE a.effective_date <= COALESCE(b.expiration_date, '9999-12-31')
+  AND b.effective_date <= COALESCE(a.expiration_date, '9999-12-31');
+
+-- Ensure only one current record per customer
+SELECT 
+    customer_id,
+    COUNT(*) AS current_count
+FROM dim_customer
+WHERE is_current = TRUE
+GROUP BY customer_id
+HAVING COUNT(*) > 1;</code></pre>
+
+        <h3>Performance Optimization</h3>
+
+        <p>
+            Type 2 dimensions can grow large. Implement partitioning strategies for very large dimensions:
+        </p>
+
+        <pre><code>-- Partition Type 2 dimension by year
+CREATE TABLE dim_customer (
+    customer_key BIGINT,
+    customer_id VARCHAR(50),
+    -- other columns...
+    effective_date DATE NOT NULL,
+    expiration_date DATE,
+    is_current BOOLEAN
+)
+PARTITION BY RANGE (YEAR(effective_date)) (
+    PARTITION p2020 VALUES LESS THAN (2021),
+    PARTITION p2021 VALUES LESS THAN (2022),
+    PARTITION p2022 VALUES LESS THAN (2023),
+    PARTITION p2023 VALUES LESS THAN (2024),
+    PARTITION p2024 VALUES LESS THAN (2025),
+    PARTITION p2025 VALUES LESS THAN (2026),
+    PARTITION pmax VALUES LESS THAN MAXVALUE
+);
+
+-- Create appropriate indexes
+CREATE INDEX idx_customer_current 
+    ON dim_customer(customer_id, is_current);
+    
+CREATE INDEX idx_effective_dates 
+    ON dim_customer(effective_date, expiration_date);
+    
+CREATE INDEX idx_customer_key 
+    ON dim_customer(customer_key);</code></pre>
+
+        <h2>Real-World Scenarios</h2>
+
+        <h3>E-commerce Product Catalog</h3>
+
+        <p>
+            An online retailer needs to track product changes while maintaining accurate historical reporting. Products move between categories, prices change, and descriptions are updated. The solution uses Type 2 for category (affects sales analysis) and price (critical for margin analysis), Type 1 for description (current accuracy is more important than history), and Type 0 for original launch date.
+        </p>
+
+        <h3>Healthcare Provider Network</h3>
+
+        <p>
+            A health insurance company tracks provider relationships. When a doctor changes hospitals or their specialty designation changes, historical claims must reflect the provider's attributes at the time of service. This requires Type 2 for all clinical attributes. However, contact information uses Type 1—you want to reach the doctor at their current number, regardless of when you're processing a claim.
+        </p>
+
+        <h3>Financial Institution Customer Management</h3>
+
+        <p>
+            A bank needs complete audit trails for regulatory compliance while maintaining fast access to current customer data. They implement Type 4: current customer information in a fast table for teller systems and account management, with complete history in a separate table for compliance reporting and fraud investigation.
+        </p>
+
+        <h2>Common Pitfalls and Solutions</h2>
+
+        <h3>Late-Arriving Facts</h3>
+
+        <p>
+            Facts sometimes arrive after dimension changes have occurred. A sale from June processed in December should join to June's dimension version, not December's. Solutions include storing the dimension key with the fact at source or using date-based joins in ETL.
+        </p>
+
+        <h3>Bulk Updates</h3>
+
+        <p>
+            When processing dimension updates in bulk, ensure atomicity. If updating 10,000 customer records and the process fails halfway through, you need to roll back cleanly. Use database transactions and proper error handling.
+        </p>
+
+        <h3>Unknown Dimension Members</h3>
+
+        <p>
+            Sometimes facts reference dimension members that don't exist yet. Create an "Unknown" or "Not Applicable" record in each dimension table with a well-known key (like -1 or 0) for these situations.
+        </p>
+
+        <h2>Conclusion</h2>
+
+        <p>
+            Slowly Changing Dimensions are fundamental to dimensional modeling, yet they're often implemented incorrectly or inconsistently. The key is understanding that there's no one-size-fits-all solution. Type 2 isn't always the answer, despite being most common. Sometimes Type 1's simplicity is exactly what you need. Other times, Type 4's separation of current and historical data provides the perfect balance.
+        </p>
+
+        <p>
+            Success with SCDs requires clear thinking about analytical requirements, careful implementation following best practices, thorough testing to catch gaps and overlaps, and comprehensive documentation so everyone understands the approach. Most importantly, be consistent within your organization. Establish standards for SCD implementation and stick to them across all dimensions.
+        </p>
+
+        <p>
+            The effort you invest in properly implementing SCDs pays dividends in analytical accuracy and flexibility. When business users can trust that historical reports accurately reflect the past, when analysts can track changes over time confidently, and when you can add new analytical capabilities without redesigning your warehouse, you'll know your SCD implementation is working.
+        </p>
+    </article>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h3 class="footer-title">Pabesh</h3>
+                <p class="footer-text">Empowering data professionals with insights on analytics, engineering, and the modern data stack.</p>
+                
+                <!-- Social Media Links -->
+                <div class="social-links">
+                    <a href="https://twitter.com/pabesh" target="_blank" rel="noopener noreferrer" aria-label="Twitter" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                        </svg>
+                    </a>
+                    <a href="https://linkedin.com/company/pabesh" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                        </svg>
+                    </a>
+                    <a href="https://github.com/pabesh" target="_blank" rel="noopener noreferrer" aria-label="GitHub" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                    </a>
+                    <a href="https://medium.com/@pabesh" target="_blank" rel="noopener noreferrer" aria-label="Medium" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M13.54 12a6.8 6.8 0 01-6.77 6.82A6.8 6.8 0 010 12a6.8 6.8 0 016.77-6.82A6.8 6.8 0 0113.54 12zM20.96 12c0 3.54-1.51 6.42-3.38 6.42-1.87 0-3.39-2.88-3.39-6.42s1.52-6.42 3.39-6.42 3.38 2.88 3.38 6.42M24 12c0 3.17-.53 5.75-1.19 5.75-.66 0-1.19-2.58-1.19-5.75s.53-5.75 1.19-5.75C23.47 6.25 24 8.83 24 12z"/>
+                        </svg>
+                    </a>
+                    <a href="https://youtube.com/@pabesh" target="_blank" rel="noopener noreferrer" aria-label="YouTube" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                        </svg>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-section">
+                <h4 class="footer-heading">Quick Links</h4>
+                <ul class="footer-links">
+                    <li><a href="index.html">Home</a></li>
+                    <li><a href="about.html">About</a></li>
+                    <li><a href="#">Archive</a></li>
+                    <li><a href="#">Contact</a></li>
+                </ul>
+            </div>
+            <div class="footer-section">
+                <h4 class="footer-heading">Categories</h4>
+                <ul class="footer-links">
+                    <li><a href="#">Data Analytics</a></li>
+                    <li><a href="#">Data Engineering</a></li>
+                    <li><a href="#">Business Intelligence</a></li>
+                    <li><a href="#">Big Data</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 Pabesh. Crafted with data-driven passion.</p>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
