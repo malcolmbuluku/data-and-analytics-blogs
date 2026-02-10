@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Building Modern Data Pipelines with Apache Airflow - Pabesh</title>
+    <meta name="description" content="Comprehensive guide to building scalable data pipelines with Apache Airflow. Learn DAG design, orchestration patterns, and production best practices.">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="nav">
+        <div class="nav-container">
+            <a href="index.html" class="logo">Pabesh</a>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link">Home</a>
+                <a href="about.html" class="nav-link">About</a>
+                <a href="#" class="nav-link">Archive</a>
+            </div>
+            <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
+                <span class="theme-icon">◐</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Article Header -->
+    <header class="article-header">
+        <div class="article-category">Data Engineering</div>
+        <h1 class="article-title">Building Modern Data Pipelines with Apache Airflow</h1>
+        <div class="article-meta">
+            <span class="meta-item">By Malcolm Buluku</span>
+            <span class="meta-divider">·</span>
+            <span class="meta-item">February 9, 2026</span>
+            <span class="meta-divider">·</span>
+            <span class="meta-item">18 min read</span>
+        </div>
+        <p class="article-excerpt">
+            Discover how to orchestrate complex data workflows, automate ETL processes, and build scalable data engineering solutions that power data-driven decision making.
+        </p>
+    </header>
+
+    <!-- Article Content -->
+    <article class="article-content">
+        <p>
+            In today's data-driven world, organizations process terabytes of data daily across multiple systems and platforms. Apache Airflow has emerged as the industry standard for orchestrating these complex data workflows, enabling data engineers to build, schedule, and monitor pipelines with unprecedented clarity and control. This comprehensive guide will take you from fundamental concepts to production-ready implementations.
+        </p>
+
+        <h2>Why Apache Airflow?</h2>
+        
+        <p>
+            Before diving into implementation details, it's crucial to understand why Airflow has become the go-to solution for data orchestration. Traditional cron-based scheduling falls short when dealing with data dependencies, failure recovery, and monitoring at scale. Airflow addresses these challenges through its directed acyclic graph (DAG) architecture, which represents workflows as code.
+        </p>
+
+        <p>
+            Unlike proprietary workflow tools, Airflow is open-source, Python-based, and incredibly flexible. You can integrate it with virtually any data system—from cloud data warehouses like Snowflake and BigQuery to streaming platforms like Kafka and batch processing frameworks like Spark. The platform's extensive operator library means you can orchestrate tasks across AWS, GCP, Azure, and on-premises infrastructure from a single interface.
+        </p>
+
+        <p>
+            The real power of Airflow lies in its "configuration as code" philosophy. Your entire data pipeline becomes version-controlled, testable, and reviewable through standard software engineering practices. This approach eliminates the brittle, hard-to-maintain workflows that plague many data operations.
+        </p>
+
+        <h2>Core Architecture and Components</h2>
+
+        <p>
+            Understanding Airflow's architecture is essential for building robust pipelines. The platform consists of several interconnected components, each serving a specific purpose in workflow execution and management.
+        </p>
+
+        <h3>The Scheduler</h3>
+
+        <p>
+            The scheduler is the brain of Airflow. It continuously parses your DAG files, determines which tasks are ready to run based on their dependencies and schedules, and submits them to the executor. The scheduler operates on a configurable interval (typically every few seconds) and maintains the state of all tasks in the metadata database. For production deployments, you can run multiple schedulers in high-availability mode to ensure continuous operation even during maintenance or failures.
+        </p>
+
+        <h3>The Executor</h3>
+
+        <p>
+            Executors determine how and where tasks actually run. The SequentialExecutor runs tasks one at a time on the same machine—useful for development but not for production. The LocalExecutor spawns multiple processes on a single machine using Python's multiprocessing module, suitable for moderate workloads. For horizontal scaling, the CeleryExecutor distributes tasks across multiple worker machines using a message queue like Redis or RabbitMQ. The KubernetesExecutor dynamically provisions pods for each task, offering maximum flexibility and resource isolation in containerized environments.
+        </p>
+
+        <h3>The Web Server</h3>
+
+        <p>
+            Airflow's web interface provides comprehensive visibility into your data pipelines. You can visualize DAG structure, monitor task execution in real-time, view logs, manually trigger runs, and investigate failures. The UI also exposes powerful features like backfilling historical data, clearing task states, and managing connections to external systems. The web server is built on Flask and can be scaled horizontally by running multiple instances behind a load balancer.
+        </p>
+
+        <h3>The Metadata Database</h3>
+
+        <p>
+            Every piece of state in Airflow—DAG structures, task instances, execution history, connection credentials, variables, and user information—is stored in the metadata database. PostgreSQL and MySQL are the recommended choices for production. The database schema is well-designed for performance, with proper indexing on frequently queried columns. Regular maintenance, including vacuum operations and statistics updates, ensures optimal query performance as your task history grows.
+        </p>
+
+        <h2>Designing Your First Data Pipeline</h2>
+
+        <p>
+            Let's build a practical ETL pipeline that extracts customer transaction data from a source database, transforms it for analytics, and loads it into a data warehouse. This example demonstrates fundamental Airflow concepts while solving a real-world problem.
+        </p>
+
+        <h3>Defining the DAG</h3>
+
+        <p>
+            Every Airflow pipeline starts with a DAG definition. The DAG object encapsulates metadata about your workflow—when it should run, how failures are handled, and dependencies between tasks. Here's a well-structured example:
+        </p>
+
+        <pre><code>from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow.providers.snowflake.operators.snowflake import SnowflakeOperator
+from datetime import datetime, timedelta
+from airflow.utils.dates import days_ago
+
+default_args = {
+    'owner': 'data-engineering-team',
+    'depends_on_past': False,
+    'email': ['data-alerts@company.com'],
+    'email_on_failure': True,
+    'email_on_retry': False,
+    'retries': 3,
+    'retry_delay': timedelta(minutes=5),
+    'execution_timeout': timedelta(hours=2),
+}
+
+with DAG(
+    dag_id='customer_transactions_etl',
+    default_args=default_args,
+    description='Daily ETL for customer transaction analytics',
+    schedule_interval='0 2 * * *',  # Run at 2 AM daily
+    start_date=days_ago(1),
+    catchup=False,
+    tags=['etl', 'analytics', 'customer-data'],
+    max_active_runs=1,
+) as dag:
+    
+    # Tasks will be defined here
+    pass</code></pre>
+
+        <p>
+            Let's break down these parameters. The <code>dag_id</code> must be unique across your Airflow instance. The <code>schedule_interval</code> uses cron syntax—this pipeline runs daily at 2 AM UTC. Setting <code>catchup=False</code> prevents Airflow from backfilling all missed runs when you first deploy the DAG. The <code>max_active_runs=1</code> ensures only one instance runs at a time, preventing race conditions when tasks write to the same destination.
+        </p>
+
+        <h3>Extracting Data</h3>
+
+        <p>
+            The extraction phase queries your source system and stages data for transformation. Implement extraction logic that handles pagination, incremental loading, and API rate limits:
+        </p>
+
+        <pre><code>def extract_transactions(**context):
+    """
+    Extract yesterday's transactions from source database.
+    Uses Airflow's execution_date for incremental processing.
+    """
+    from airflow.providers.postgres.hooks.postgres import PostgresHook
+    import pandas as pd
+    
+    execution_date = context['execution_date']
+    start_date = execution_date.strftime('%Y-%m-%d')
+    end_date = (execution_date + timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    # Use Airflow's connection management
+    pg_hook = PostgresHook(postgres_conn_id='source_db')
+    
+    query = f"""
+        SELECT 
+            transaction_id,
+            customer_id,
+            transaction_date,
+            amount,
+            payment_method,
+            product_category,
+            status
+        FROM transactions
+        WHERE transaction_date >= '{start_date}'
+          AND transaction_date < '{end_date}'
+          AND status NOT IN ('cancelled', 'failed')
+    """
+    
+    # Fetch data in chunks to manage memory
+    df = pg_hook.get_pandas_df(query)
+    
+    # Store to temporary location using XCom or file system
+    temp_file = f'/tmp/transactions_{start_date}.parquet'
+    df.to_parquet(temp_file, index=False, compression='snappy')
+    
+    # Return metadata for downstream tasks
+    return {
+        'record_count': len(df),
+        'file_path': temp_file,
+        'processing_date': start_date
+    }
+
+extract_task = PythonOperator(
+    task_id='extract_transactions',
+    python_callable=extract_transactions,
+    provide_context=True,
+)</code></pre>
+
+        <p>
+            This extraction task demonstrates several best practices. It uses Airflow's execution date for deterministic, idempotent runs. The PostgresHook leverages Airflow's connection management, keeping credentials out of your code. Saving to Parquet format with Snappy compression balances query performance and storage efficiency. The function returns metadata that downstream tasks can access through XCom.
+        </p>
+
+        <h3>Transforming Data</h3>
+
+        <p>
+            Transformation logic applies business rules, performs aggregations, and enriches data with additional context. Keep transformations modular and testable:
+        </p>
+
+        <pre><code>def transform_transactions(**context):
+    """
+    Apply business logic and create analytics-ready datasets.
+    """
+    import pandas as pd
+    import numpy as np
+    
+    # Retrieve extraction metadata from XCom
+    ti = context['task_instance']
+    extract_metadata = ti.xcom_pull(task_ids='extract_transactions')
+    input_file = extract_metadata['file_path']
+    
+    # Load extracted data
+    df = pd.read_parquet(input_file)
+    
+    # Data quality checks
+    assert df['transaction_id'].is_unique, "Duplicate transaction IDs detected"
+    assert df['amount'].notna().all(), "Null values found in amount column"
+    assert (df['amount'] >= 0).all(), "Negative amounts detected"
+    
+    # Feature engineering
+    df['transaction_date'] = pd.to_datetime(df['transaction_date'])
+    df['transaction_hour'] = df['transaction_date'].dt.hour
+    df['day_of_week'] = df['transaction_date'].dt.dayofweek
+    df['is_weekend'] = df['day_of_week'].isin([5, 6])
+    
+    # Categorize amounts
+    df['amount_category'] = pd.cut(
+        df['amount'],
+        bins=[0, 50, 100, 500, float('inf')],
+        labels=['small', 'medium', 'large', 'premium']
+    )
+    
+    # Calculate customer metrics
+    customer_metrics = df.groupby('customer_id').agg({
+        'amount': ['sum', 'mean', 'count'],
+        'transaction_id': 'count'
+    }).reset_index()
+    
+    customer_metrics.columns = [
+        'customer_id', 'total_amount', 'avg_amount', 
+        'transaction_count_1', 'transaction_count_2'
+    ]
+    
+    # Merge metrics back
+    df = df.merge(customer_metrics, on='customer_id', how='left')
+    
+    # Save transformed data
+    output_file = input_file.replace('.parquet', '_transformed.parquet')
+    df.to_parquet(output_file, index=False, compression='snappy')
+    
+    return {
+        'record_count': len(df),
+        'file_path': output_file,
+        'data_quality_passed': True
+    }
+
+transform_task = PythonOperator(
+    task_id='transform_transactions',
+    python_callable=transform_transactions,
+    provide_context=True,
+)</code></pre>
+
+        <p>
+            Transformation tasks should include data quality assertions. If assertions fail, the task fails, preventing bad data from reaching your warehouse. The modular design allows you to test transformation logic independently of Airflow infrastructure.
+        </p>
+
+        <h3>Loading to the Data Warehouse</h3>
+
+        <p>
+            The final step loads transformed data into your analytics platform. Implement idempotent loads using merge/upsert operations:
+        </p>
+
+        <pre><code>def load_to_warehouse(**context):
+    """
+    Load transformed data to Snowflake using COPY INTO.
+    """
+    from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
+    import os
+    
+    ti = context['task_instance']
+    transform_metadata = ti.xcom_pull(task_ids='transform_transactions')
+    file_path = transform_metadata['file_path']
+    processing_date = context['ds']  # execution date as string
+    
+    # Upload to S3 staging area
+    s3_key = f'staging/transactions/{processing_date}/data.parquet'
+    # S3 upload logic here
+    
+    # Use Snowflake hook
+    sf_hook = SnowflakeHook(snowflake_conn_id='snowflake_warehouse')
+    
+    # Create staging table
+    create_staging_sql = """
+        CREATE TEMPORARY TABLE staging_transactions AS
+        SELECT * FROM analytics.transactions LIMIT 0;
+    """
+    
+    # Load from S3 to staging
+    copy_sql = f"""
+        COPY INTO staging_transactions
+        FROM @s3_stage/{s3_key}
+        FILE_FORMAT = (TYPE = PARQUET);
+    """
+    
+    # Merge into final table (idempotent upsert)
+    merge_sql = """
+        MERGE INTO analytics.transactions t
+        USING staging_transactions s
+        ON t.transaction_id = s.transaction_id
+        WHEN MATCHED THEN UPDATE SET
+            t.amount = s.amount,
+            t.payment_method = s.payment_method,
+            t.updated_at = CURRENT_TIMESTAMP()
+        WHEN NOT MATCHED THEN INSERT (
+            transaction_id, customer_id, transaction_date,
+            amount, payment_method, product_category,
+            created_at, updated_at
+        ) VALUES (
+            s.transaction_id, s.customer_id, s.transaction_date,
+            s.amount, s.payment_method, s.product_category,
+            CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
+        );
+    """
+    
+    # Execute in transaction
+    sf_hook.run([create_staging_sql, copy_sql, merge_sql])
+    
+    return {'records_loaded': transform_metadata['record_count']}
+
+load_task = PythonOperator(
+    task_id='load_to_warehouse',
+    python_callable=load_to_warehouse,
+    provide_context=True,
+)</code></pre>
+
+        <h3>Defining Dependencies</h3>
+
+        <p>
+            Task dependencies define execution order. Airflow provides multiple syntaxes for expressing these relationships:
+        </p>
+
+        <pre><code># Method 1: Bitshift operators (most readable)
+extract_task >> transform_task >> load_task
+
+# Method 2: set_upstream/set_downstream
+transform_task.set_upstream(extract_task)
+load_task.set_upstream(transform_task)
+
+# Method 3: chain helper (for linear dependencies)
+from airflow.models.baseoperator import chain
+chain(extract_task, transform_task, load_task)</code></pre>
+
+        <h2>Advanced DAG Patterns</h2>
+
+        <h3>Dynamic Task Generation</h3>
+
+        <p>
+            When you need to process multiple similar datasets or partitions, dynamic task generation eliminates code duplication:
+        </p>
+
+        <pre><code>from airflow.operators.python import PythonOperator
+
+# Process multiple product categories in parallel
+PRODUCT_CATEGORIES = ['electronics', 'clothing', 'home', 'sports', 'books']
+
+def process_category(category, **context):
+    """Process transactions for a specific category."""
+    # Category-specific processing logic
+    pass
+
+category_tasks = []
+for category in PRODUCT_CATEGORIES:
+    task = PythonOperator(
+        task_id=f'process_{category}',
+        python_callable=process_category,
+        op_kwargs={'category': category},
+        provide_context=True,
+    )
+    category_tasks.append(task)
+
+# All category tasks depend on extraction
+extract_task >> category_tasks
+
+# Aggregation waits for all categories
+aggregate_task = PythonOperator(
+    task_id='aggregate_results',
+    python_callable=aggregate_all_categories,
+)
+
+category_tasks >> aggregate_task</code></pre>
+
+        <h3>Conditional Execution with Branching</h3>
+
+        <p>
+            Branch operators enable conditional logic within DAGs. Execute different paths based on data characteristics or business rules:
+        </p>
+
+        <pre><code>from airflow.operators.python import BranchPythonOperator
+
+def decide_processing_path(**context):
+    """
+    Route to different processing paths based on data volume.
+    """
+    ti = context['task_instance']
+    metadata = ti.xcom_pull(task_ids='extract_transactions')
+    record_count = metadata['record_count']
+    
+    if record_count > 1000000:
+        return 'heavy_processing_path'
+    else:
+        return 'light_processing_path'
+
+branch_task = BranchPythonOperator(
+    task_id='decide_path',
+    python_callable=decide_processing_path,
+    provide_context=True,
+)
+
+heavy_task = PythonOperator(
+    task_id='heavy_processing_path',
+    python_callable=process_large_dataset,
+)
+
+light_task = PythonOperator(
+    task_id='light_processing_path',
+    python_callable=process_small_dataset,
+)
+
+extract_task >> branch_task >> [heavy_task, light_task]</code></pre>
+
+        <h3>SubDAGs and Task Groups</h3>
+
+        <p>
+            For complex workflows, TaskGroups (introduced in Airflow 2.0) provide visual organization without the performance overhead of SubDAGs:
+        </p>
+
+        <pre><code>from airflow.utils.task_group import TaskGroup
+
+with TaskGroup(group_id='data_quality_checks') as quality_checks:
+    
+    check_nulls = PythonOperator(
+        task_id='check_null_values',
+        python_callable=validate_no_nulls,
+    )
+    
+    check_duplicates = PythonOperator(
+        task_id='check_duplicates',
+        python_callable=validate_unique_ids,
+    )
+    
+    check_ranges = PythonOperator(
+        task_id='check_value_ranges',
+        python_callable=validate_data_ranges,
+    )
+    
+    # Parallel checks within the group
+    [check_nulls, check_duplicates, check_ranges]
+
+# Use the group in your DAG
+transform_task >> quality_checks >> load_task</code></pre>
+
+        <h2>Production Best Practices</h2>
+
+        <h3>Idempotency</h3>
+
+        <p>
+            Every task should be idempotent—running it multiple times with the same inputs produces the same result. This is critical for recovery from failures. Use merge/upsert operations instead of inserts. Include processing dates in partition keys. Implement proper cleanup of temporary resources.
+        </p>
+
+        <h3>Error Handling and Retries</h3>
+
+        <p>
+            Configure intelligent retry logic at both DAG and task levels:
+        </p>
+
+        <pre><code># DAG-level defaults
+default_args = {
+    'retries': 3,
+    'retry_delay': timedelta(minutes=5),
+    'retry_exponential_backoff': True,
+    'max_retry_delay': timedelta(hours=1),
+}
+
+# Task-specific overrides
+critical_task = PythonOperator(
+    task_id='critical_operation',
+    python_callable=critical_function,
+    retries=5,  # More retries for critical tasks
+    retry_delay=timedelta(minutes=10),
+)
+
+# Add task-level callbacks
+def task_failure_alert(context):
+    """Send detailed alerts on task failure."""
+    task_instance = context['task_instance']
+    # Send to Slack, PagerDuty, etc.
+    pass
+
+monitored_task = PythonOperator(
+    task_id='monitored_operation',
+    python_callable=important_function,
+    on_failure_callback=task_failure_alert,
+)</code></pre>
+
+        <h3>Connection and Variable Management</h3>
+
+        <p>
+            Never hardcode credentials or configuration values. Use Airflow's connection and variable management with secret backends:
+        </p>
+
+        <pre><code># Store in Airflow UI or environment
+from airflow.models import Variable
+from airflow.hooks.base import BaseHook
+
+# Get configuration variables
+warehouse_schema = Variable.get('warehouse_schema', default_var='analytics')
+batch_size = Variable.get('processing_batch_size', default_var=1000, deserialize_json=True)
+
+# Get connection details
+warehouse_conn = BaseHook.get_connection('snowflake_warehouse')
+db_host = warehouse_conn.host
+db_port = warehouse_conn.port</code></pre>
+
+        <h3>Resource Management</h3>
+
+        <p>
+            Control resource consumption using pools and task concurrency limits:
+        </p>
+
+        <pre><code># Create pools in Airflow UI: Admin > Pools
+# Name: database_connections, Slots: 5
+
+database_task = PythonOperator(
+    task_id='query_database',
+    python_callable=run_query,
+    pool='database_connections',  # Limit concurrent DB connections
+    priority_weight=10,  # Higher priority tasks run first
+)
+
+# Limit task-level concurrency
+parallel_processing = PythonOperator(
+    task_id='parallel_work',
+    python_callable=process_in_parallel,
+    max_active_tis_per_dag=3,  # Max 3 instances across all DAG runs
+)</code></pre>
+
+        <h2>Monitoring and Observability</h2>
+
+        <h3>Service Level Agreements (SLAs)</h3>
+
+        <p>
+            Define SLAs to catch slow-running or stuck tasks:
+        </p>
+
+        <pre><code>def sla_miss_callback(dag, task_list, blocking_task_list, slas, blocking_tis):
+    """Alert when tasks miss their SLA."""
+    # Send notifications
+    pass
+
+with DAG(
+    dag_id='time_sensitive_pipeline',
+    default_args=default_args,
+    sla_miss_callback=sla_miss_callback,
+) as dag:
+    
+    time_critical_task = PythonOperator(
+        task_id='must_complete_quickly',
+        python_callable=quick_operation,
+        sla=timedelta(minutes=30),  # Alert if takes > 30 min
+    )</code></pre>
+
+        <h3>Custom Metrics</h3>
+
+        <p>
+            Emit custom metrics for monitoring dashboards:
+        </p>
+
+        <pre><code>from airflow.stats import Stats
+
+def process_with_metrics(**context):
+    """Emit custom metrics during processing."""
+    start_time = time.time()
+    
+    # Your processing logic
+    records_processed = 1000
+    
+    # Emit metrics
+    Stats.incr('custom.records_processed', records_processed)
+    Stats.gauge('custom.processing_time', time.time() - start_time)
+    Stats.gauge('custom.pipeline_lag', calculate_lag())
+    
+    return records_processed</code></pre>
+
+        <h3>Log Management</h3>
+
+        <p>
+            Configure remote log storage for centralized access and long-term retention:
+        </p>
+
+        <pre><code># airflow.cfg
+[logging]
+remote_logging = True
+remote_base_log_folder = s3://my-bucket/airflow-logs
+remote_log_conn_id = aws_default
+encrypt_s3_logs = True</code></pre>
+
+        <h2>Scaling Airflow</h2>
+
+        <h3>Horizontal Scaling with Celery</h3>
+
+        <p>
+            For high-throughput workloads, deploy Airflow with the CeleryExecutor across multiple worker nodes. Each worker can be configured with specific queues for workload isolation:
+        </p>
+
+        <pre><code># Assign tasks to specific queues
+cpu_intensive_task = PythonOperator(
+    task_id='heavy_computation',
+    python_callable=complex_calculation,
+    queue='compute_queue',  # Runs on compute-optimized workers
+)
+
+io_task = PythonOperator(
+    task_id='data_transfer',
+    python_callable=transfer_data,
+    queue='io_queue',  # Runs on I/O optimized workers
+)</code></pre>
+
+        <h3>Kubernetes Executor</h3>
+
+        <p>
+            The KubernetesExecutor offers maximum flexibility by launching each task in its own pod:
+        </p>
+
+        <pre><code>from kubernetes.client import models as k8s
+
+specialized_task = PythonOperator(
+    task_id='gpu_processing',
+    python_callable=gpu_workload,
+    executor_config={
+        'pod_override': k8s.V1Pod(
+            spec=k8s.V1PodSpec(
+                containers=[
+                    k8s.V1Container(
+                        name='base',
+                        resources=k8s.V1ResourceRequirements(
+                            requests={'memory': '8Gi', 'cpu': '4'},
+                            limits={'memory': '16Gi', 'cpu': '8', 'nvidia.com/gpu': '1'}
+                        )
+                    )
+                ]
+            )
+        )
+    }
+)</code></pre>
+
+        <h2>Testing and CI/CD</h2>
+
+        <h3>Unit Testing DAGs</h3>
+
+        <p>
+            Write tests for your DAG structure and task logic:
+        </p>
+
+        <pre><code>import pytest
+from airflow.models import DagBag
+
+def test_dag_loads_without_errors():
+    """Ensure DAG file contains valid Python and Airflow code."""
+    dagbag = DagBag(dag_folder='dags/', include_examples=False)
+    assert len(dagbag.import_errors) == 0, f"DAG import failures: {dagbag.import_errors}"
+
+def test_dag_structure():
+    """Verify DAG has expected tasks and dependencies."""
+    dagbag = DagBag(dag_folder='dags/', include_examples=False)
+    dag = dagbag.get_dag('customer_transactions_etl')
+    
+    assert dag is not None
+    assert len(dag.tasks) == 3
+    assert 'extract_transactions' in dag.task_ids
+    
+    # Check dependencies
+    extract_task = dag.get_task('extract_transactions')
+    assert len(extract_task.downstream_task_ids) == 1
+
+def test_transformation_logic():
+    """Test transformation function independently."""
+    from dags.customer_transactions import transform_transactions
+    
+    # Create test data
+    test_df = pd.DataFrame({
+        'transaction_id': [1, 2, 3],
+        'amount': [100, 200, 300]
+    })
+    
+    # Test transformation
+    result = transform_transactions(test_df)
+    assert 'amount_category' in result.columns</code></pre>
+
+        <h3>Integration Testing</h3>
+
+        <p>
+            Test DAG execution in a sandboxed environment:
+        </p>
+
+        <pre><code>def test_dag_execution():
+    """Execute DAG in test mode."""
+    from airflow.models import DagBag
+    from airflow.utils.state import State
+    
+    dagbag = DagBag(dag_folder='dags/')
+    dag = dagbag.get_dag('customer_transactions_etl')
+    
+    # Run with test execution date
+    execution_date = datetime(2026, 1, 1)
+    dag.run(start_date=execution_date, end_date=execution_date)
+    
+    # Verify all tasks succeeded
+    dag_run = dag.get_dagrun(execution_date)
+    for task_id in dag.task_ids:
+        task_instance = dag_run.get_task_instance(task_id)
+        assert task_instance.state == State.SUCCESS</code></pre>
+
+        <h2>Real-World Use Cases</h2>
+
+        <h3>ML Model Training Pipeline</h3>
+
+        <p>
+            Orchestrate end-to-end machine learning workflows from data preparation through model deployment:
+        </p>
+
+        <pre><code>with DAG('ml_training_pipeline', ...) as dag:
+    
+    # Data preparation
+    extract_features = PythonOperator(task_id='extract_features', ...)
+    validate_data = PythonOperator(task_id='validate_data', ...)
+    
+    # Model training
+    train_model = PythonOperator(task_id='train_model', ...)
+    evaluate_model = PythonOperator(task_id='evaluate_model', ...)
+    
+    # Deployment decision
+    should_deploy = BranchPythonOperator(task_id='check_metrics', ...)
+    deploy_model = KubernetesPodOperator(task_id='deploy_to_prod', ...)
+    
+    extract_features >> validate_data >> train_model >> evaluate_model
+    evaluate_model >> should_deploy >> deploy_model</code></pre>
+
+        <h3>Data Lake Ingestion</h3>
+
+        <p>
+            Continuously ingest data from various sources into your data lake with proper partitioning and cataloging:
+        </p>
+
+        <pre><code>SOURCES = ['salesforce', 'zendesk', 'stripe', 'google_analytics']
+
+for source in SOURCES:
+    ingest = PythonOperator(
+        task_id=f'ingest_{source}',
+        python_callable=ingest_data,
+        op_kwargs={'source': source, 'target': 's3://data-lake/raw/'},
+    )
+    
+    catalog = PythonOperator(
+        task_id=f'catalog_{source}',
+        python_callable=update_glue_catalog,
+        op_kwargs={'source': source},
+    )
+    
+    ingest >> catalog</code></pre>
+
+        <h2>Conclusion</h2>
+
+        <p>
+            Apache Airflow has fundamentally transformed how organizations build and manage data pipelines. By representing workflows as code, you gain the benefits of version control, code review, automated testing, and collaborative development. The platform's extensibility means you can integrate virtually any data system, while its robust scheduling and monitoring capabilities ensure reliable execution at scale.
+        </p>
+
+        <p>
+            Success with Airflow requires more than just technical knowledge—it demands thoughtful design, attention to operational details, and commitment to best practices. Start simple with basic DAGs, gradually incorporate advanced patterns as needs grow, and always prioritize idempotency, monitoring, and error handling. Invest in proper testing infrastructure and establish clear conventions within your team.
+        </p>
+
+        <p>
+            As data volumes and complexity continue to grow, Airflow's declarative approach to workflow orchestration positions it as a critical component of the modern data stack. Whether you're building simple ETL pipelines or orchestrating complex multi-stage machine learning workflows, Airflow provides the foundation for reliable, scalable data operations.
+        </p>
+
+        <p>
+            The journey to mastery involves continuous learning and adaptation. Engage with the vibrant Airflow community, stay current with new features and best practices, and don't hesitate to contribute back through bug reports, feature requests, or code contributions. Your data pipeline is only as good as the orchestration layer that manages it—make it robust, make it scalable, and make it maintainable.
+        </p>
+    </article>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h3 class="footer-title">Pabesh</h3>
+                <p class="footer-text">Empowering data professionals with insights on analytics, engineering, and the modern data stack.</p>
+                
+                <!-- Social Media Links -->
+                <div class="social-links">
+                    <a href="https://twitter.com/pabesh" target="_blank" rel="noopener noreferrer" aria-label="Twitter" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                        </svg>
+                    </a>
+                    <a href="https://linkedin.com/company/pabesh" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                        </svg>
+                    </a>
+                    <a href="https://github.com/pabesh" target="_blank" rel="noopener noreferrer" aria-label="GitHub" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                    </a>
+                    <a href="https://medium.com/@pabesh" target="_blank" rel="noopener noreferrer" aria-label="Medium" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M13.54 12a6.8 6.8 0 01-6.77 6.82A6.8 6.8 0 010 12a6.8 6.8 0 016.77-6.82A6.8 6.8 0 0113.54 12zM20.96 12c0 3.54-1.51 6.42-3.38 6.42-1.87 0-3.39-2.88-3.39-6.42s1.52-6.42 3.39-6.42 3.38 2.88 3.38 6.42M24 12c0 3.17-.53 5.75-1.19 5.75-.66 0-1.19-2.58-1.19-5.75s.53-5.75 1.19-5.75C23.47 6.25 24 8.83 24 12z"/>
+                        </svg>
+                    </a>
+                    <a href="https://youtube.com/@pabesh" target="_blank" rel="noopener noreferrer" aria-label="YouTube" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                        </svg>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-section">
+                <h4 class="footer-heading">Quick Links</h4>
+                <ul class="footer-links">
+                    <li><a href="index.html">Home</a></li>
+                    <li><a href="about.html">About</a></li>
+                    <li><a href="#">Archive</a></li>
+                    <li><a href="#">Contact</a></li>
+                </ul>
+            </div>
+            <div class="footer-section">
+                <h4 class="footer-heading">Categories</h4>
+                <ul class="footer-links">
+                    <li><a href="#">Data Analytics</a></li>
+                    <li><a href="#">Data Engineering</a></li>
+                    <li><a href="#">Business Intelligence</a></li>
+                    <li><a href="#">Big Data</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 Pabesh. Crafted with data-driven passion.</p>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,1139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Real-Time Data Processing with Apache Kafka and Spark - Pabesh</title>
+    <meta name="description" content="Master real-time data processing with Apache Kafka and Spark Streaming. Learn event-driven architectures, streaming patterns, and production deployment strategies.">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="nav">
+        <div class="nav-container">
+            <a href="index.html" class="logo">Pabesh</a>
+            <div class="nav-links">
+                <a href="index.html" class="nav-link">Home</a>
+                <a href="about.html" class="nav-link">About</a>
+                <a href="#" class="nav-link">Archive</a>
+            </div>
+            <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
+                <span class="theme-icon">◐</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Article Header -->
+    <header class="article-header">
+        <div class="article-category">Data Engineering</div>
+        <h1 class="article-title">Real-Time Data Processing with Apache Kafka and Spark</h1>
+        <div class="article-meta">
+            <span class="meta-item">By Malcolm Buluku</span>
+            <span class="meta-divider">·</span>
+            <span class="meta-item">February 9, 2026</span>
+            <span class="meta-divider">·</span>
+            <span class="meta-item">22 min read</span>
+        </div>
+        <p class="article-excerpt">
+            Build robust streaming architectures for processing millions of events per second using Kafka, Spark Streaming, and modern event-driven patterns.
+        </p>
+    </header>
+
+    <!-- Article Content -->
+    <article class="article-content">
+        <p>
+            In today's digital economy, data moves at unprecedented speeds. Click streams, IoT sensors, financial transactions, and social media interactions generate millions of events every second. Traditional batch processing, which analyzes data hours or days after it's generated, is no longer sufficient. Organizations need real-time insights to detect fraud instantly, personalize user experiences on the fly, and respond to operational issues before they escalate.
+        </p>
+
+        <p>
+            Apache Kafka and Apache Spark have emerged as the de facto standard for building real-time data processing systems. Kafka provides a distributed, fault-tolerant event streaming platform capable of handling trillions of events per day. Spark Streaming extends Spark's powerful data processing capabilities to streaming data, enabling complex analytics on live data streams. Together, they form the backbone of modern streaming architectures at companies like Netflix, Uber, LinkedIn, and Airbnb.
+        </p>
+
+        <h2>Understanding the Streaming Paradigm</h2>
+        
+        <p>
+            Before diving into implementation, we need to understand how streaming systems differ from traditional batch processing. In batch processing, you collect data over a period, then process it all at once. Streaming systems process data continuously as it arrives, treating data as an infinite, unbounded stream of events rather than a finite dataset.
+        </p>
+
+        <p>
+            This shift in perspective has profound implications. You can't sort an infinite stream. You can't iterate over it multiple times. Instead, you process events in the order they arrive, maintaining state as needed, and emitting results continuously. Streaming systems must handle out-of-order events, deal with late-arriving data, and manage ever-growing state efficiently.
+        </p>
+
+        <h3>Event Time vs. Processing Time</h3>
+
+        <p>
+            One of the most critical concepts in streaming is the distinction between event time and processing time. Event time is when an event actually occurred in the real world—when a user clicked a button, when a sensor recorded a reading, when a transaction was initiated. Processing time is when your system processes that event, which could be milliseconds or hours later depending on network latency, system failures, or backpressure.
+        </p>
+
+        <p>
+            For accurate analytics, you almost always want to use event time. If you're calculating hourly sales totals, you want transactions grouped by when they occurred, not when your system happened to process them. This requires careful timestamp management and handling of late-arriving events through watermarking and windowing strategies.
+        </p>
+
+        <h2>Apache Kafka Architecture</h2>
+
+        <p>
+            Kafka's architecture is deceptively simple yet incredibly powerful. At its core, Kafka is a distributed commit log. Producers write records to topics, which are divided into partitions. Consumers read records from these partitions, maintaining their own offsets to track position in the stream.
+        </p>
+
+        <h3>Topics and Partitions</h3>
+
+        <p>
+            A topic is a logical stream of records. For example, you might have topics for "user-clicks", "payment-transactions", or "sensor-readings". Each topic is divided into one or more partitions for parallel processing and fault tolerance. Records within a partition are totally ordered, meaning Kafka guarantees that if message A is written before message B to the same partition, consumers will see A before B.
+        </p>
+
+        <p>
+            Partitioning serves two crucial purposes. First, it enables horizontal scaling—each partition can be hosted on a different broker, and different consumers can process different partitions in parallel. Second, it provides a natural grouping mechanism. By using a key when producing messages, you ensure all messages with the same key go to the same partition, which is essential for maintaining ordering guarantees and stateful processing.
+        </p>
+
+        <h3>Producer Configuration</h3>
+
+        <p>
+            Let's build a production-ready Kafka producer. The key is balancing throughput, latency, and durability:
+        </p>
+
+        <pre><code>from kafka import KafkaProducer
+from kafka.errors import KafkaError
+import json
+import logging
+
+class RobustKafkaProducer:
+    """
+    Production-ready Kafka producer with error handling and monitoring.
+    """
+    
+    def __init__(self, bootstrap_servers, topic):
+        self.topic = topic
+        self.producer = KafkaProducer(
+            bootstrap_servers=bootstrap_servers,
+            
+            # Serialization
+            key_serializer=lambda k: k.encode('utf-8') if k else None,
+            value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+            
+            # Reliability settings
+            acks='all',  # Wait for all replicas to acknowledge
+            retries=3,   # Retry failed sends
+            max_in_flight_requests_per_connection=5,
+            
+            # Performance tuning
+            compression_type='snappy',  # Compress messages
+            batch_size=16384,           # Batch size in bytes
+            linger_ms=10,               # Wait 10ms to batch messages
+            buffer_memory=33554432,     # 32MB buffer
+            
+            # Idempotence for exactly-once semantics
+            enable_idempotence=True,
+        )
+        
+        self.logger = logging.getLogger(__name__)
+    
+    def send_event(self, key, value, headers=None):
+        """
+        Send event with callback handling.
+        """
+        try:
+            # Async send with callback
+            future = self.producer.send(
+                self.topic,
+                key=key,
+                value=value,
+                headers=headers or []
+            )
+            
+            # Add success and error callbacks
+            future.add_callback(self._on_send_success)
+            future.add_errback(self._on_send_error)
+            
+            return future
+            
+        except Exception as e:
+            self.logger.error(f"Error sending message: {e}")
+            raise
+    
+    def _on_send_success(self, record_metadata):
+        """Log successful sends."""
+        self.logger.debug(
+            f"Message sent to {record_metadata.topic} "
+            f"partition {record_metadata.partition} "
+            f"offset {record_metadata.offset}"
+        )
+    
+    def _on_send_error(self, exception):
+        """Handle send errors."""
+        self.logger.error(f"Error sending message: {exception}")
+    
+    def flush_and_close(self):
+        """Ensure all messages are sent before closing."""
+        self.producer.flush()
+        self.producer.close()
+
+# Usage example
+producer = RobustKafkaProducer(
+    bootstrap_servers=['kafka-1:9092', 'kafka-2:9092', 'kafka-3:9092'],
+    topic='user-events'
+)
+
+# Send user click event
+event = {
+    'user_id': 'user123',
+    'event_type': 'click',
+    'timestamp': '2026-02-09T10:30:00Z',
+    'page': '/products/widget',
+    'session_id': 'session456'
+}
+
+producer.send_event(
+    key='user123',  # Messages with same key go to same partition
+    value=event,
+    headers=[('source', b'web-app'), ('version', b'1.0')]
+)</code></pre>
+
+        <p>
+            This producer configuration balances several competing concerns. Setting <code>acks='all'</code> ensures durability but increases latency slightly. Enabling idempotence prevents duplicate messages if retries occur. Compression reduces network usage but adds CPU overhead. Batching increases throughput but adds latency. Tune these parameters based on your specific requirements.
+        </p>
+
+        <h3>Consumer Groups and Rebalancing</h3>
+
+        <p>
+            Kafka's consumer group mechanism enables parallel processing while maintaining ordering guarantees. Consumers in the same group divide up partition assignments, ensuring each partition is consumed by exactly one consumer in the group. This provides both scalability and fault tolerance.
+        </p>
+
+        <p>
+            When a consumer joins or leaves a group, Kafka triggers a rebalance to redistribute partitions. During rebalancing, consumption pauses briefly, which is why it's important to minimize rebalancing frequency in production systems. Configure consumers with appropriate session timeouts and heartbeat intervals to distinguish between slow processing and actual failures.
+        </p>
+
+        <pre><code>from kafka import KafkaConsumer
+import json
+
+class StreamingConsumer:
+    """
+    Robust Kafka consumer with offset management.
+    """
+    
+    def __init__(self, bootstrap_servers, topic, group_id):
+        self.consumer = KafkaConsumer(
+            topic,
+            bootstrap_servers=bootstrap_servers,
+            group_id=group_id,
+            
+            # Deserialization
+            key_deserializer=lambda k: k.decode('utf-8') if k else None,
+            value_deserializer=lambda v: json.loads(v.decode('utf-8')),
+            
+            # Offset management
+            enable_auto_commit=False,  # Manual commit for better control
+            auto_offset_reset='earliest',  # Start from beginning if no offset
+            
+            # Session management
+            session_timeout_ms=30000,  # 30 seconds
+            heartbeat_interval_ms=3000,  # 3 seconds
+            max_poll_interval_ms=300000,  # 5 minutes
+            
+            # Performance
+            fetch_min_bytes=1024,  # Min bytes to fetch
+            fetch_max_wait_ms=500,  # Max wait time
+            max_partition_fetch_bytes=1048576,  # 1MB per partition
+        )
+    
+    def process_stream(self, processor_func):
+        """
+        Consume and process messages with manual offset commits.
+        """
+        try:
+            for message in self.consumer:
+                try:
+                    # Process the message
+                    result = processor_func(message.value)
+                    
+                    # Commit offset only after successful processing
+                    self.consumer.commit()
+                    
+                    # Log progress
+                    if message.offset % 1000 == 0:
+                        print(f"Processed {message.offset} messages "
+                              f"from partition {message.partition}")
+                    
+                except Exception as e:
+                    print(f"Error processing message: {e}")
+                    # Decide: skip message, retry, or halt
+                    # For now, we'll log and continue
+                    continue
+                    
+        except KeyboardInterrupt:
+            print("Shutting down consumer...")
+        finally:
+            self.consumer.close()
+
+# Usage
+def process_user_event(event):
+    """Process individual event."""
+    user_id = event['user_id']
+    event_type = event['event_type']
+    
+    # Your processing logic
+    print(f"User {user_id} performed {event_type}")
+    
+    # Update analytics, trigger alerts, etc.
+    return True
+
+consumer = StreamingConsumer(
+    bootstrap_servers=['kafka-1:9092', 'kafka-2:9092'],
+    topic='user-events',
+    group_id='analytics-processor'
+)
+
+consumer.process_stream(process_user_event)</code></pre>
+
+        <h2>Apache Spark Streaming</h2>
+
+        <p>
+            Spark Streaming extends Apache Spark to handle real-time data streams. It provides two APIs: DStreams (the original, based on micro-batching) and Structured Streaming (the modern approach, based on continuous processing). We'll focus on Structured Streaming, which offers better performance, simpler programming model, and unified batch/streaming semantics.
+        </p>
+
+        <h3>Structured Streaming Fundamentals</h3>
+
+        <p>
+            Structured Streaming treats streaming data as an unbounded table. Each new record appends to this table. You express your streaming computation as a query on this table, and Spark continuously executes the query, updating results as new data arrives. This abstraction is powerful because it lets you use the same DataFrame/Dataset API for both batch and streaming, and Spark handles the complexities of incremental computation.
+        </p>
+
+        <pre><code>from pyspark.sql import SparkSession
+from pyspark.sql.functions import *
+from pyspark.sql.types import *
+
+# Initialize Spark with optimized settings
+spark = SparkSession.builder \
+    .appName("RealTimeEventProcessing") \
+    .config("spark.sql.shuffle.partitions", "6") \
+    .config("spark.streaming.kafka.maxRatePerPartition", "1000") \
+    .config("spark.sql.streaming.checkpointLocation", "/tmp/checkpoint") \
+    .getOrCreate()
+
+# Define schema for incoming events
+event_schema = StructType([
+    StructField("user_id", StringType(), True),
+    StructField("event_type", StringType(), True),
+    StructField("timestamp", TimestampType(), True),
+    StructField("page", StringType(), True),
+    StructField("session_id", StringType(), True),
+    StructField("properties", MapType(StringType(), StringType()), True)
+])
+
+# Read from Kafka
+raw_stream = spark \
+    .readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "kafka-1:9092,kafka-2:9092") \
+    .option("subscribe", "user-events") \
+    .option("startingOffsets", "latest") \
+    .option("maxOffsetsPerTrigger", "10000") \
+    .option("failOnDataLoss", "false") \
+    .load()
+
+# Parse JSON and extract event data
+parsed_events = raw_stream \
+    .selectExpr("CAST(value AS STRING) as json") \
+    .select(from_json("json", event_schema).alias("data")) \
+    .select("data.*") \
+    .withColumn("processing_time", current_timestamp())
+
+# Display schema
+parsed_events.printSchema()</code></pre>
+
+        <h3>Windowing and Aggregations</h3>
+
+        <p>
+            Windowing is fundamental to streaming analytics. Windows group events into finite chunks for aggregation, allowing you to compute metrics like "events per minute" or "hourly totals" on an infinite stream. Spark supports tumbling windows (fixed, non-overlapping), sliding windows (overlapping), and session windows (gap-based).
+        </p>
+
+        <pre><code># Tumbling window: Count events per 5-minute window
+events_per_window = parsed_events \
+    .withWatermark("timestamp", "10 minutes") \
+    .groupBy(
+        window("timestamp", "5 minutes"),
+        "event_type"
+    ) \
+    .agg(
+        count("*").alias("event_count"),
+        countDistinct("user_id").alias("unique_users"),
+        approx_count_distinct("session_id").alias("approx_sessions")
+    )
+
+# Sliding window: Moving average over 10 minutes, sliding every 1 minute
+sliding_metrics = parsed_events \
+    .withWatermark("timestamp", "10 minutes") \
+    .groupBy(
+        window("timestamp", "10 minutes", "1 minute"),
+        "page"
+    ) \
+    .agg(
+        count("*").alias("page_views"),
+        countDistinct("user_id").alias("unique_visitors")
+    ) \
+    .select(
+        col("window.start").alias("window_start"),
+        col("window.end").alias("window_end"),
+        "page",
+        "page_views",
+        "unique_visitors"
+    )</code></pre>
+
+        <p>
+            The <code>withWatermark</code> call is crucial. It tells Spark how long to wait for late-arriving events. In this example, we wait up to 10 minutes. Events arriving more than 10 minutes late are dropped. Watermarking enables Spark to safely discard old state, preventing unbounded memory growth.
+        </p>
+
+        <h3>Stateful Processing</h3>
+
+        <p>
+            Many streaming applications require maintaining state across events. For example, tracking user sessions, computing running totals, or detecting patterns across multiple events. Spark Streaming provides powerful stateful operations for these scenarios.
+        </p>
+
+        <pre><code>from pyspark.sql.streaming import GroupState, GroupStateTimeout
+
+# Define state schema
+class SessionState:
+    def __init__(self):
+        self.session_start = None
+        self.last_event_time = None
+        self.event_count = 0
+        self.pages_visited = set()
+        self.events = []
+
+def update_session_state(key, events, state):
+    """
+    Update session state with new events.
+    Implements session timeout logic.
+    """
+    # Get existing state or create new
+    if state.exists:
+        session = state.get()
+    else:
+        session = SessionState()
+    
+    # Process events
+    for event in events:
+        if session.session_start is None:
+            session.session_start = event.timestamp
+        
+        session.last_event_time = event.timestamp
+        session.event_count += 1
+        session.pages_visited.add(event.page)
+        session.events.append(event.event_type)
+    
+    # Check for session timeout (30 minutes of inactivity)
+    if state.hasTimedOut:
+        # Session ended - emit final state
+        output = {
+            'session_id': key,
+            'duration_minutes': (session.last_event_time - session.session_start).seconds / 60,
+            'total_events': session.event_count,
+            'pages_visited': len(session.pages_visited),
+            'event_sequence': session.events
+        }
+        state.remove()  # Clear state
+        yield output
+    else:
+        # Update state and set timeout
+        state.update(session)
+        state.setTimeoutDuration("30 minutes")
+
+# Apply stateful processing
+session_analytics = parsed_events \
+    .groupByKey(lambda x: x.session_id) \
+    .flatMapGroupsWithState(
+        update_session_state,
+        GroupStateTimeout.ProcessingTimeTimeout
+    )</code></pre>
+
+        <h3>Joining Streams</h3>
+
+        <p>
+            Real-world applications often need to join multiple streams or enrich streaming data with reference data. Spark Streaming supports stream-stream joins with watermarking and stream-static joins.
+        </p>
+
+        <pre><code># Stream-stream join: Join clicks with purchases
+clicks = spark \
+    .readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "kafka-1:9092") \
+    .option("subscribe", "user-clicks") \
+    .load() \
+    .select(from_json("value", click_schema).alias("click")) \
+    .select("click.*") \
+    .withWatermark("timestamp", "1 hour")
+
+purchases = spark \
+    .readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "kafka-1:9092") \
+    .option("subscribe", "purchases") \
+    .load() \
+    .select(from_json("value", purchase_schema).alias("purchase")) \
+    .select("purchase.*") \
+    .withWatermark("timestamp", "1 hour")
+
+# Join within 30-minute window
+click_to_purchase = clicks.alias("c").join(
+    purchases.alias("p"),
+    expr("""
+        c.user_id = p.user_id AND
+        c.product_id = p.product_id AND
+        p.timestamp >= c.timestamp AND
+        p.timestamp <= c.timestamp + interval 30 minutes
+    """),
+    "inner"
+).select(
+    col("c.user_id"),
+    col("c.product_id"),
+    col("c.timestamp").alias("click_time"),
+    col("p.timestamp").alias("purchase_time"),
+    (col("p.timestamp").cast("long") - col("c.timestamp").cast("long")).alias("time_to_purchase_seconds")
+)
+
+# Stream-static join: Enrich with user profile data
+user_profiles = spark.read.parquet("s3://data/user-profiles")
+
+enriched_events = parsed_events.join(
+    broadcast(user_profiles),  # Broadcast for efficiency
+    "user_id",
+    "left"
+).select(
+    "user_id",
+    "event_type",
+    "timestamp",
+    "page",
+    "user_profiles.country",
+    "user_profiles.age_group",
+    "user_profiles.premium_status"
+)</code></pre>
+
+        <h2>Building a Complete Real-Time Pipeline</h2>
+
+        <p>
+            Let's build an end-to-end real-time analytics pipeline for an e-commerce platform. This system processes clickstream data, detects fraud patterns, personalizes recommendations, and updates dashboards in real-time.
+        </p>
+
+        <h3>Architecture Overview</h3>
+
+        <p>
+            Our pipeline consists of several stages: data ingestion from web servers and mobile apps into Kafka, stream processing with Spark to compute analytics and detect anomalies, writing results to multiple sinks (data warehouse for analytics, cache for real-time serving, alert system for critical events), and monitoring throughout.
+        </p>
+
+        <h3>Clickstream Processing</h3>
+
+        <pre><code>class ClickstreamProcessor:
+    """
+    Real-time clickstream analytics processor.
+    """
+    
+    def __init__(self, spark):
+        self.spark = spark
+        self.checkpoint_dir = "/mnt/checkpoints/clickstream"
+    
+    def create_pipeline(self):
+        """Build the complete streaming pipeline."""
+        
+        # 1. Read raw clickstream
+        raw_clicks = self.spark \
+            .readStream \
+            .format("kafka") \
+            .option("kafka.bootstrap.servers", "kafka:9092") \
+            .option("subscribe", "clickstream") \
+            .option("startingOffsets", "latest") \
+            .load()
+        
+        # 2. Parse and validate
+        parsed_clicks = raw_clicks \
+            .selectExpr("CAST(value AS STRING) as json") \
+            .select(from_json("json", self.click_schema).alias("click")) \
+            .select("click.*") \
+            .filter(col("user_id").isNotNull()) \
+            .filter(col("timestamp").isNotNull()) \
+            .withWatermark("timestamp", "2 hours")
+        
+        # 3. Sessionization
+        sessionized = self.sessionize_clicks(parsed_clicks)
+        
+        # 4. Real-time metrics
+        metrics = self.compute_metrics(sessionized)
+        
+        # 5. Anomaly detection
+        anomalies = self.detect_anomalies(sessionized)
+        
+        # 6. Write to multiple sinks
+        self.write_metrics(metrics)
+        self.write_anomalies(anomalies)
+        
+        return metrics, anomalies
+    
+    def sessionize_clicks(self, clicks):
+        """
+        Create sessions from clicks using session window.
+        A session ends after 30 minutes of inactivity.
+        """
+        return clicks \
+            .groupBy(
+                "user_id",
+                session_window("timestamp", "30 minutes")
+            ) \
+            .agg(
+                min("timestamp").alias("session_start"),
+                max("timestamp").alias("session_end"),
+                count("*").alias("clicks_in_session"),
+                collect_list("page").alias("page_sequence"),
+                collect_set("page").alias("unique_pages"),
+                sum(col("time_on_page")).alias("total_time_seconds")
+            ) \
+            .withColumn("session_duration_minutes",
+                (col("session_end").cast("long") - 
+                 col("session_start").cast("long")) / 60
+            )
+    
+    def compute_metrics(self, sessions):
+        """
+        Compute real-time business metrics.
+        """
+        return sessions \
+            .groupBy(
+                window("session_start", "1 minute")
+            ) \
+            .agg(
+                count("*").alias("total_sessions"),
+                avg("clicks_in_session").alias("avg_clicks_per_session"),
+                avg("session_duration_minutes").alias("avg_session_duration"),
+                countDistinct("user_id").alias("active_users"),
+                
+                # Engagement metrics
+                sum(when(col("clicks_in_session") >= 10, 1).otherwise(0))
+                    .alias("highly_engaged_sessions"),
+                
+                # Conversion funnel
+                sum(when(array_contains("page_sequence", "/checkout"), 1).otherwise(0))
+                    .alias("checkout_initiations"),
+                sum(when(array_contains("page_sequence", "/confirmation"), 1).otherwise(0))
+                    .alias("completed_purchases")
+            ) \
+            .withColumn("engagement_rate",
+                col("highly_engaged_sessions") / col("total_sessions")
+            ) \
+            .withColumn("conversion_rate",
+                col("completed_purchases") / col("checkout_initiations")
+            )
+    
+    def detect_anomalies(self, sessions):
+        """
+        Detect suspicious patterns in real-time.
+        """
+        # Flag suspicious activity
+        suspicious_sessions = sessions \
+            .filter(
+                # Too many pages too quickly
+                (col("clicks_in_session") > 50) & 
+                (col("session_duration_minutes") < 5)
+                |
+                # Unusual navigation patterns
+                (size(col("unique_pages")) < 3) & 
+                (col("clicks_in_session") > 20)
+                |
+                # Multiple checkout attempts
+                (array_contains("page_sequence", "/checkout")) &
+                (size(filter("page_sequence", 
+                    lambda x: x == "/checkout")) > 3)
+            ) \
+            .withColumn("anomaly_type", 
+                when((col("clicks_in_session") > 50) & 
+                     (col("session_duration_minutes") < 5), "bot_activity")
+                .when((size(col("unique_pages")) < 3) & 
+                      (col("clicks_in_session") > 20), "scraping")
+                .otherwise("fraud_attempt")
+            ) \
+            .select(
+                "user_id",
+                "session_start",
+                "anomaly_type",
+                "clicks_in_session",
+                "session_duration_minutes",
+                "page_sequence"
+            )
+        
+        return suspicious_sessions
+    
+    def write_metrics(self, metrics_stream):
+        """
+        Write metrics to multiple destinations.
+        """
+        # Write to console for monitoring
+        console_query = metrics_stream \
+            .writeStream \
+            .outputMode("complete") \
+            .format("console") \
+            .option("truncate", "false") \
+            .start()
+        
+        # Write to Kafka for downstream consumers
+        kafka_query = metrics_stream \
+            .selectExpr("to_json(struct(*)) AS value") \
+            .writeStream \
+            .format("kafka") \
+            .option("kafka.bootstrap.servers", "kafka:9092") \
+            .option("topic", "real-time-metrics") \
+            .option("checkpointLocation", f"{self.checkpoint_dir}/metrics") \
+            .start()
+        
+        # Write to Parquet for historical analysis
+        parquet_query = metrics_stream \
+            .writeStream \
+            .format("parquet") \
+            .option("path", "s3://analytics/clickstream-metrics") \
+            .option("checkpointLocation", f"{self.checkpoint_dir}/parquet") \
+            .partitionBy("window") \
+            .start()
+        
+        return [console_query, kafka_query, parquet_query]
+    
+    def write_anomalies(self, anomalies_stream):
+        """
+        Write anomalies to alert system.
+        """
+        # Write to Kafka for alert processing
+        alert_query = anomalies_stream \
+            .selectExpr("to_json(struct(*)) AS value") \
+            .writeStream \
+            .format("kafka") \
+            .option("kafka.bootstrap.servers", "kafka:9092") \
+            .option("topic", "security-alerts") \
+            .option("checkpointLocation", f"{self.checkpoint_dir}/alerts") \
+            .start()
+        
+        # Write to database for investigation
+        def write_to_db(batch_df, batch_id):
+            batch_df.write \
+                .format("jdbc") \
+                .option("url", "jdbc:postgresql://db:5432/analytics") \
+                .option("dbtable", "anomalous_sessions") \
+                .option("user", "analyst") \
+                .option("password", "password") \
+                .mode("append") \
+                .save()
+        
+        db_query = anomalies_stream \
+            .writeStream \
+            .foreachBatch(write_to_db) \
+            .start()
+        
+        return [alert_query, db_query]
+
+# Initialize and run
+processor = ClickstreamProcessor(spark)
+metrics_queries, anomaly_queries = processor.create_pipeline()
+
+# Keep running
+spark.streams.awaitAnyTermination()</code></pre>
+
+        <h2>Advanced Patterns and Optimizations</h2>
+
+        <h3>Exactly-Once Processing</h3>
+
+        <p>
+            Achieving exactly-once semantics in distributed streaming systems is challenging but critical for many applications. With Kafka and Spark, you need to coordinate several components: idempotent producers, transactional writes to Kafka, checkpointing in Spark, and idempotent or transactional writes to external sinks.
+        </p>
+
+        <pre><code># Configure Spark for exactly-once processing
+spark = SparkSession.builder \
+    .config("spark.sql.streaming.checkpointLocation", "/checkpoints") \
+    .config("spark.sql.streaming.stateStore.providerClass", 
+            "org.apache.spark.sql.execution.streaming.state.HDFSBackedStateStoreProvider") \
+    .getOrCreate()
+
+# Enable Kafka exactly-once semantics
+df = spark \
+    .readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "kafka:9092") \
+    .option("subscribe", "transactions") \
+    .option("kafka.isolation.level", "read_committed") \
+    .load()
+
+# Write with exactly-once to Kafka
+query = processed_df \
+    .writeStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "kafka:9092") \
+    .option("topic", "processed-transactions") \
+    .option("checkpointLocation", "/checkpoints/output") \
+    .start()
+
+# For database writes, use foreachBatch with idempotent logic
+def idempotent_write(batch_df, batch_id):
+    """
+    Write batch idempotently using upsert.
+    """
+    batch_df.write \
+        .format("jdbc") \
+        .option("url", "jdbc:postgresql://db/warehouse") \
+        .option("dbtable", f"staging_{batch_id}") \
+        .mode("overwrite") \
+        .save()
+    
+    # Upsert from staging to final table
+    execute_sql(f"""
+        INSERT INTO final_table
+        SELECT * FROM staging_{batch_id}
+        ON CONFLICT (id) DO UPDATE
+        SET value = EXCLUDED.value,
+            updated_at = CURRENT_TIMESTAMP
+    """)
+
+query = processed_df \
+    .writeStream \
+    .foreachBatch(idempotent_write) \
+    .start()</code></pre>
+
+        <h3>Backpressure Handling</h3>
+
+        <p>
+            When your stream processing can't keep up with incoming data, backpressure builds up. Spark provides several mechanisms to handle this gracefully:
+        </p>
+
+        <pre><code># Limit processing rate
+spark.conf.set("spark.streaming.kafka.maxRatePerPartition", "1000")
+spark.conf.set("spark.streaming.backpressure.enabled", "true")
+
+# Adaptive rate limiting
+spark.conf.set("spark.streaming.backpressure.initialRate", "1000")
+
+# Trigger configuration for batch intervals
+query = stream \
+    .writeStream \
+    .trigger(processingTime='10 seconds') \
+    .start()
+
+# Or use continuous processing (experimental)
+query = stream \
+    .writeStream \
+    .trigger(continuous='1 second') \
+    .start()</code></pre>
+
+        <h3>State Management Optimization</h3>
+
+        <p>
+            Stateful operations can consume significant memory. Optimize state management through careful design and configuration:
+        </p>
+
+        <pre><code># Use appropriate state timeout
+.withWatermark("timestamp", "1 hour")  # Balance accuracy vs. state size
+
+# Partition state appropriately
+.repartition(200, "session_id")  # Distribute state evenly
+
+# Use Bloom filters for deduplication
+from pyspark.sql.functions import bloom_filter_agg
+
+deduplicated = stream \
+    .groupBy(window("timestamp", "1 hour")) \
+    .agg(bloom_filter_agg("user_id", 10000000, 0.01).alias("seen_users"))
+
+# Configure state store
+spark.conf.set("spark.sql.streaming.stateStore.minDeltasForSnapshot", "10")
+spark.conf.set("spark.sql.streaming.stateStore.maintenanceInterval", "60s")</code></pre>
+
+        <h2>Monitoring and Operations</h2>
+
+        <h3>Metrics and Observability</h3>
+
+        <p>
+            Production streaming applications require comprehensive monitoring. Track both infrastructure metrics and application-specific metrics:
+        </p>
+
+        <pre><code># Access streaming query metrics
+for query in spark.streams.active:
+    print(f"Query: {query.name}")
+    print(f"Status: {query.status}")
+    print(f"Recent progress: {query.recentProgress}")
+    
+    # Get detailed metrics
+    last_progress = query.lastProgress
+    if last_progress:
+        print(f"Input rate: {last_progress['inputRowsPerSecond']} rows/sec")
+        print(f"Processing rate: {last_progress['processedRowsPerSecond']} rows/sec")
+        print(f"Batch duration: {last_progress['batchDuration']} ms")
+        print(f"Total rows: {last_progress['numInputRows']}")
+
+# Custom metrics listener
+class MetricsListener(StreamingQueryListener):
+    def onQueryStarted(self, event):
+        print(f"Query started: {event.id}")
+    
+    def onQueryProgress(self, event):
+        progress = event.progress
+        # Send to monitoring system
+        send_to_prometheus({
+            'input_rate': progress.inputRowsPerSecond,
+            'processing_rate': progress.processedRowsPerSecond,
+            'batch_duration': progress.batchDuration
+        })
+    
+    def onQueryTerminated(self, event):
+        print(f"Query terminated: {event.id}")
+
+spark.streams.addListener(MetricsListener())</code></pre>
+
+        <h3>Error Handling and Recovery</h3>
+
+        <p>
+            Robust error handling is essential for production streaming applications. Implement retry logic, dead letter queues, and graceful degradation:
+        </p>
+
+        <pre><code>def process_with_error_handling(batch_df, batch_id):
+    """
+    Process batch with comprehensive error handling.
+    """
+    try:
+        # Main processing logic
+        processed = batch_df.transform(complex_transformation)
+        
+        # Validate results
+        if processed.count() == 0:
+            logger.warning(f"Batch {batch_id} produced no results")
+            return
+        
+        # Write to primary sink
+        processed.write \
+            .format("delta") \
+            .mode("append") \
+            .save("s3://data-lake/processed")
+        
+        logger.info(f"Successfully processed batch {batch_id}")
+        
+    except Exception as e:
+        logger.error(f"Error processing batch {batch_id}: {str(e)}")
+        
+        # Write failed batch to dead letter queue
+        batch_df \
+            .withColumn("error", lit(str(e))) \
+            .withColumn("batch_id", lit(batch_id)) \
+            .withColumn("failed_at", current_timestamp()) \
+            .write \
+            .format("delta") \
+            .mode("append") \
+            .save("s3://data-lake/failed-batches")
+        
+        # Alert on-call
+        send_alert(f"Batch processing failed: {batch_id}")
+        
+        # Decide whether to fail the query or continue
+        if is_critical_error(e):
+            raise  # Fail the streaming query
+        else:
+            return  # Log and continue
+
+query = stream \
+    .writeStream \
+    .foreachBatch(process_with_error_handling) \
+    .option("checkpointLocation", "/checkpoints") \
+    .start()</code></pre>
+
+        <h2>Best Practices and Production Considerations</h2>
+
+        <h3>Schema Evolution</h3>
+
+        <p>
+            As your application evolves, message schemas will change. Handle schema evolution gracefully:
+        </p>
+
+        <pre><code># Use schema registry for versioning
+from confluent_kafka.schema_registry import SchemaRegistryClient
+
+schema_registry = SchemaRegistryClient({'url': 'http://schema-registry:8081'})
+
+# Read with schema from registry
+stream = spark \
+    .readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "kafka:9092") \
+    .option("subscribe", "events") \
+    .load() \
+    .select(
+        from_json(
+            col("value").cast("string"),
+            get_schema_from_registry(schema_registry, "events-value"),
+            {"mode": "PERMISSIVE"}  # Allow missing fields
+        ).alias("data")
+    ) \
+    .select("data.*")
+
+# Handle schema mismatches
+processed = stream \
+    .withColumn("_corrupt_record", 
+        when(col("data").isNull(), col("value")).otherwise(None)
+    ) \
+    .filter(col("_corrupt_record").isNull())  # Filter bad records
+
+# Log corrupt records separately
+corrupt = stream \
+    .filter(col("_corrupt_record").isNotNull()) \
+    .writeStream \
+    .format("delta") \
+    .option("path", "s3://logs/corrupt-records") \
+    .start()</code></pre>
+
+        <h3>Testing Streaming Applications</h3>
+
+        <p>
+            Test streaming logic thoroughly before production deployment:
+        </p>
+
+        <pre><code>import pytest
+from pyspark.sql import SparkSession
+from pyspark.sql.types import *
+from datetime import datetime
+
+@pytest.fixture
+def spark():
+    return SparkSession.builder \
+        .master("local[2]") \
+        .appName("test") \
+        .getOrCreate()
+
+def test_sessionization(spark):
+    """Test session logic with sample data."""
+    
+    # Create test data
+    test_data = [
+        ("user1", datetime(2026, 1, 1, 10, 0, 0), "/home"),
+        ("user1", datetime(2026, 1, 1, 10, 5, 0), "/products"),
+        ("user1", datetime(2026, 1, 1, 10, 40, 0), "/checkout"),  # New session
+        ("user2", datetime(2026, 1, 1, 10, 0, 0), "/home"),
+    ]
+    
+    df = spark.createDataFrame(test_data, ["user_id", "timestamp", "page"])
+    
+    # Apply sessionization logic
+    sessions = sessionize_clicks(df)
+    
+    # Assertions
+    assert sessions.count() == 3  # 2 sessions for user1, 1 for user2
+    
+    user1_sessions = sessions.filter(col("user_id") == "user1").collect()
+    assert len(user1_sessions) == 2
+    assert user1_sessions[0].clicks_in_session == 2
+    assert user1_sessions[1].clicks_in_session == 1
+
+def test_anomaly_detection(spark):
+    """Test anomaly detection logic."""
+    
+    # Create suspicious behavior
+    suspicious_data = [
+        ("bot1", 100, 2, ["/page1", "/page2"]),  # Many clicks, short duration
+    ]
+    
+    df = spark.createDataFrame(
+        suspicious_data,
+        ["user_id", "clicks_in_session", "session_duration_minutes", "page_sequence"]
+    )
+    
+    anomalies = detect_anomalies(df)
+    
+    assert anomalies.count() == 1
+    assert anomalies.first().anomaly_type == "bot_activity"</code></pre>
+
+        <h2>Real-World Case Studies</h2>
+
+        <h3>Fraud Detection at Scale</h3>
+
+        <p>
+            A payment processor uses Kafka and Spark to analyze millions of transactions per second, detecting fraud in real-time. They maintain a graph of entities and relationships in Spark state, flagging suspicious patterns like circular money flows, rapid account creation, or unusual geographic patterns. When fraud is detected, they immediately block the transaction and alert investigators, reducing fraud losses by 40% while minimizing false positives.
+        </p>
+
+        <h3>IoT Telemetry Processing</h3>
+
+        <p>
+            A manufacturing company ingests sensor data from thousands of factory machines. Their Spark Streaming application computes rolling averages, detects anomalies indicating equipment failure, and triggers preventive maintenance. By processing 50 million events daily with sub-second latency, they've reduced unplanned downtime by 60% and extended equipment life by 25%.
+        </p>
+
+        <h3>Real-Time Recommendations</h3>
+
+        <p>
+            An e-commerce platform uses streaming to power real-time product recommendations. As users browse, their clickstream flows through Kafka into Spark, which updates collaborative filtering models and computes similarity scores. Results are cached in Redis, enabling personalized recommendations with less than 100ms latency. This increased conversion rates by 18% and average order value by 12%.
+        </p>
+
+        <h2>Conclusion</h2>
+
+        <p>
+            Real-time data processing with Kafka and Spark has transformed how organizations interact with data. Instead of waiting hours or days for batch jobs, you can detect fraud instantly, personalize experiences in real-time, and respond to operational issues before they escalate. The combination of Kafka's durable, scalable event streaming and Spark's powerful stream processing creates a robust foundation for modern data architectures.
+        </p>
+
+        <p>
+            Success requires more than just technical implementation. You need careful architecture design, attention to operational details, comprehensive monitoring, and commitment to best practices. Start with simple pipelines, validate thoroughly, and gradually increase complexity as you gain experience. Invest in observability from day one—you can't fix what you can't see.
+        </p>
+
+        <p>
+            The streaming paradigm shift is fundamental and irreversible. As data volumes continue to grow and business needs demand ever-lower latency, streaming architectures will become the default rather than the exception. Master these technologies now to build the data systems of the future.
+        </p>
+    </article>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h3 class="footer-title">Pabesh</h3>
+                <p class="footer-text">Empowering data professionals with insights on analytics, engineering, and the modern data stack.</p>
+                
+                <!-- Social Media Links -->
+                <div class="social-links">
+                    <a href="https://twitter.com/pabesh" target="_blank" rel="noopener noreferrer" aria-label="Twitter" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                        </svg>
+                    </a>
+                    <a href="https://linkedin.com/company/pabesh" target="_blank" rel="noopener noreferrer" aria-label="LinkedIn" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                        </svg>
+                    </a>
+                    <a href="https://github.com/pabesh" target="_blank" rel="noopener noreferrer" aria-label="GitHub" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                    </a>
+                    <a href="https://medium.com/@pabesh" target="_blank" rel="noopener noreferrer" aria-label="Medium" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M13.54 12a6.8 6.8 0 01-6.77 6.82A6.8 6.8 0 010 12a6.8 6.8 0 016.77-6.82A6.8 6.8 0 0113.54 12zM20.96 12c0 3.54-1.51 6.42-3.38 6.42-1.87 0-3.39-2.88-3.39-6.42s1.52-6.42 3.39-6.42 3.38 2.88 3.38 6.42M24 12c0 3.17-.53 5.75-1.19 5.75-.66 0-1.19-2.58-1.19-5.75s.53-5.75 1.19-5.75C23.47 6.25 24 8.83 24 12z"/>
+                        </svg>
+                    </a>
+                    <a href="https://youtube.com/@pabesh" target="_blank" rel="noopener noreferrer" aria-label="YouTube" class="social-link">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                        </svg>
+                    </a>
+                </div>
+            </div>
+            <div class="footer-section">
+                <h4 class="footer-heading">Quick Links</h4>
+                <ul class="footer-links">
+                    <li><a href="index.html">Home</a></li>
+                    <li><a href="about.html">About</a></li>
+                    <li><a href="#">Archive</a></li>
+                    <li><a href="#">Contact</a></li>
+                </ul>
+            </div>
+            <div class="footer-section">
+                <h4 class="footer-heading">Categories</h4>
+                <ul class="footer-links">
+                    <li><a href="#">Data Analytics</a></li>
+                    <li><a href="#">Data Engineering</a></li>
+                    <li><a href="#">Business Intelligence</a></li>
+                    <li><a href="#">Big Data</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>&copy; 2026 Pabesh. Crafted with data-driven passion.</p>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
